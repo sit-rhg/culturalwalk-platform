@@ -135,8 +135,9 @@ def upgrade() -> None:
             name="ck_place_facts_verified_needs_source",
         ),
         sa.ForeignKeyConstraint(["place_id"], ["places.id"], ondelete="CASCADE"),
-        # 来源被删时把事实的来源置空，而不是连事实一起删——说法本身还有价值，
-        # 只是从此降级为「待核实」（前端按 source_id IS NULL 处理）。
+        # 来源被删时把出处置空，而不是连说法一起删——说法本身还有价值，只是从此按「待核实」处理。
+        # 注意它与上面 CHECK 的配合：verified 的说法被置空会撞 CHECK，于是数据库直接拒绝删这条来源。
+        # 这是有意的 fail-closed：删来源前必须先把引用它的 verified 说法降级（CA-03 负责）。
         sa.ForeignKeyConstraint(["source_id"], ["place_sources.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
     )

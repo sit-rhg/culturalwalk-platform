@@ -176,6 +176,11 @@ class PlaceFact(Base):
     )
     # 一个说法一条主来源：openapi 的 `PlaceFactInput.source` 就是单个对象。
     # 读接口返回的 `sources` 是数组，当前长度为 0 或 1；将来要多来源再拆中间表。
+    #
+    # SET NULL 只对 confidence 为 unverified / likely 的说法生效（来源删了，说法留下、降级展示）。
+    # 若来源还被 verified 的说法引用着，置空会撞下面的 CHECK，数据库直接拒绝删除——
+    # 这是有意的 fail-closed：删来源的接口（CA-03）必须先把这些说法降到 unverified，
+    # 或者返回 409 让编辑先处理，不能留下「已核实但没出处」的行。
     source_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("place_sources.id", ondelete="SET NULL"), nullable=True, index=True
     )
