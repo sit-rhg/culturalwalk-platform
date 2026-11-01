@@ -23,9 +23,10 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterator
 from decimal import Decimal
+from typing import cast
 
 import pytest
-from sqlalchemy import create_engine, delete, func, inspect, select, text, update
+from sqlalchemy import Table, create_engine, delete, func, inspect, select, text, update
 from sqlalchemy import exc as sa_exc
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
@@ -34,7 +35,18 @@ from app.core.config import settings
 from app.core.db import Base
 from app.modules.catalog.models import FactConfidence, Place, PlaceFact, PlaceSource
 
-CATALOG_TABLES = (Place.__table__, PlaceSource.__table__, PlaceFact.__table__)
+
+def _catalog_tables() -> list[Table]:
+    """三张表的 Table 对象。
+
+    `Model.__table__` 的静态类型是通用的 FromClause，而 create_all/drop_all 要的是 Table，
+    这里显式收窄，省得每个调用点各写一次 cast。
+    """
+    return [
+        cast(Table, Place.__table__),
+        cast(Table, PlaceSource.__table__),
+        cast(Table, PlaceFact.__table__),
+    ]
 
 
 @pytest.fixture()
@@ -55,12 +67,12 @@ def pg_engine() -> Iterator[Engine]:
     # 用完删掉，免得挡了后面的 `alembic upgrade head`。
     created_here = not inspect(engine).has_table("places")
     if created_here:
-        Base.metadata.create_all(engine, tables=list(CATALOG_TABLES))
+        Base.metadata.create_all(engine, tables=_catalog_tables())
     try:
         yield engine
     finally:
         if created_here:
-            Base.metadata.drop_all(engine, tables=list(CATALOG_TABLES))
+            Base.metadata.drop_all(engine, tables=_catalog_tables())
         engine.dispose()
 
 
