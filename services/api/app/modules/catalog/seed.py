@@ -169,7 +169,10 @@ def load_seed_places(path: str | Path) -> list[SeedPlace]:
     return places
 
 
-def _existing_ids(session: Session, model: type, ids: list[uuid.UUID]) -> set[uuid.UUID]:
+def _existing_ids[T: Place | PlaceSource | PlaceFact](
+    session: Session, model: type[T], ids: list[uuid.UUID]
+) -> set[uuid.UUID]:
+    """一次查完已存在的行，避免逐条 SELECT。三类表都有 id 主键，所以用一个类型参数收口。"""
     if not ids:
         return set()
     return set(session.scalars(select(model.id).where(model.id.in_(ids))).all())
