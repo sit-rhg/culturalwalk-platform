@@ -23,20 +23,15 @@ export type Feature =
 
 /** null = 已实现；字符串 = 还在等这个接口（注释里写清楚等哪个） */
 const PENDING: Record<Feature, string | null> = {
-  // ID-04：个人主页的已发布路线与统计
+  // identity/router.py 里这个端点整段被注释掉了，请求会 404，先留演示数据兜底
   profile: 'GET /users/{user_id}/profile',
-  // moderation 模块目前只有空 router，审核列表/认领/裁决都还没实现
-  reviewQueue: 'GET /review/tasks（含认领与裁决）',
-  // routes 模块只有草稿，浏览所需的路线列表/详情接口还没实现
-  routeList: 'GET /routes',
-  routeDetail: 'GET /routes/{id}',
-  favorite: 'POST /routes/{id}/favorite',
-  // 评论区跟随路线详情一起做
-  comments: 'GET/POST /routes/{id}/comments',
-  // routes 模块的草稿 CRUD 已实现，但送审动作还没有
-  draftSubmit: 'POST /route-drafts/{id}/submit',
-  // notifications 目前只有列表，没有标记已读
-  notificationRead: 'POST /notifications/{id}/read',
+  reviewQueue: null,
+  routeList: null,
+  routeDetail: null,
+  favorite: null,
+  comments: null,
+  draftSubmit: null,
+  notificationRead: null,
 }
 
 export function pendingEndpoint(feature: Feature): string | null {

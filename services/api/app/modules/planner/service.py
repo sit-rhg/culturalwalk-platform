@@ -18,7 +18,10 @@ from typing import Final
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.deps import CurrentUser
 from app.core.errors import Conflict, Forbidden, NotFound
+from app.core.pagination import DEFAULT_LIMIT, MAX_LIMIT, decode_cursor, encode_cursor
+from app.modules.audit import service as audit
 from app.modules.planner.agents.base import PlaceSource, PlanContext
 from app.modules.planner.draft import (
     RouteDraftPort,
@@ -60,6 +63,7 @@ from app.modules.planner.schemas import (
     PlanIn,
     PlanItemOut,
     PlanOut,
+    PlansPageOut,
     PlanStepOut,
 )
 
@@ -322,6 +326,71 @@ class PlannerService:
         run = self.repo.latest_run(itinerary.id)
         steps = self.repo.steps_for_run(run.id) if run is not None else []
         return itinerary, run, steps
+
+    def list_plans(
+        self, *, user_id: uuid.UUID, cursor: str | None = None, limit: int = DEFAULT_LIMIT
+    ) -> PlansPageOut:
+        """我的行程列表，按 created_at 倒序游标分页。
+
+        只按 user_id 过滤，别人的行程连查都不查：列表接口不会被用来探测
+        某个 id 是否存在，也就少了一条容易写漏的越权路径。
+        """
+        limit = max(1, min(limit, MAX_LIMIT))
+        after = decode_cursor(cursor) if cursor else None
+        rows = self.repo.list_for_user(user_id=user_id, after=after, limit=limit + 1)
+        items = rows[:limit]
+        has_more = len(rows) > limit
+        runs = self.repo.latest_runs([itinerary.id for itinerary in items])
+        return PlansPageOut(
+            items=[
+                PlanOut.from_itinerary(
+                    itinerary,
+                    run_id=runs[itinerary.id].id if itinerary.id in runs else None,
+                )
+                for itinerary in items
+            ],
+            next_cursor=encode_cursor(items[-1].created_at, items[-1].id) if has_more else None,
+        )
+
+    def delete_plan(
+        self,
+        *,
+        user_id: uuid.UUID,
+        plan_id: uuid.UUID,
+        actor: CurrentUser,
+        request_id: str | None = None,
+    ) -> None:
+        """删除自己的行程（软删），不设状态门禁。
+
+        契约的 DELETE 只声明 204，没有规定哪些状态不能删；数据模型里 deleted_at
+        本来就是给这件事用的，后台任务也会在行程消失后把对应 job 判失败
+        （见 execute_job 开头那段），所以生成中的行程同样可以删。
+        「已转成草稿」也不用单独判断：to_draft 只是把内容复制进 routes 的草稿，
+        行程本身没有"已转"标记，删行程不会动那份草稿，用户仍能在草稿箱里继续投稿。
+
+        不是自己的按 404 而不是 403：DELETE 不该泄露"这个 id 存在"。
+        """
+        itinerary = self.repo.get_itinerary(plan_id)
+        if itinerary is None or itinerary.user_id != user_id:
+            raise NotFound("行程不存在")
+        before = {
+            "state": itinerary.state.value,
+            "city": itinerary.city,
+            "days": itinerary.days,
+            "people": itinerary.people,
+            "budget_total": itinerary.budget_total,
+        }
+        self.repo.soft_delete(itinerary, when=datetime.now(UTC))
+        audit.write(
+            self.db,
+            action="plan.delete",
+            object_type="itinerary",
+            object_id=str(itinerary.id),
+            actor_id=actor.id,
+            actor_username=actor.username,
+            before_hash=audit.AuditService.digest(before),
+            request_id=request_id,
+        )
 
     def enqueue(self, itinerary: Itinerary, run: PlanRun) -> PlanJob:
         """把这次生成排进任务表。

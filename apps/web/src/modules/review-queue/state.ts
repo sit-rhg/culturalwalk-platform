@@ -24,14 +24,22 @@ export function isPendingTask(task: ReviewTask): boolean {
   return task.state === 'OPEN' || task.state === 'CLAIMED'
 }
 
+/** 后端 DecisionRequest.reason 的 min_length，前端先拦，省掉一次 422。 */
+export const MIN_REASON_LENGTH = 10
+
 /**
- * 退回必须写理由。后端也会用 422 REVIEW_REASON_REQUIRED 兜底，
+ * 退回必须写理由，且理由长度 1-9 字后端会 422；通过时理由可以留空。
  * 这里先拦住，省掉一次注定失败的请求。
  */
 export function decisionBlockedReason(
   action: ReviewDecision | null,
   note: string,
 ): string {
-  if (!action || action === 'approve') return ''
-  return note.trim() ? '' : '退回必须写理由'
+  const text = note.trim()
+  if (!action) return ''
+  if (text.length > 0 && text.length < MIN_REASON_LENGTH) {
+    return `理由至少写 ${MIN_REASON_LENGTH} 个字`
+  }
+  if (action === 'approve') return ''
+  return text.length >= MIN_REASON_LENGTH ? '' : '退回必须写理由'
 }

@@ -15,11 +15,16 @@ import {
   type ReviewDecision,
 } from '@/modules/review-queue/state'
 import { notificationKindLabel, payloadText } from '@/pages/me/logic'
-import { ApiError, api } from '@/shared/api'
-import { pendingEndpoint } from '@/shared/capabilities'
+import { errorMessage as readError } from '@/api/adapters'
+import {
+  claimReviewTask,
+  decideReviewTask,
+  fetchReviewTasks,
+  fetchSubmission,
+} from '@/api/endpoints'
+import { api } from '@/shared/api'
 import { relativeTime, reviewActionLabel } from '@/shared/format'
 import { isAdmin, isLoggedIn, refreshMe } from '@/shared/session'
-import DemoNotice from '@/shared/ui/DemoNotice.vue'
 import EmptyState from '@/shared/ui/EmptyState.vue'
 import Modal from '@/shared/ui/Modal.vue'
 import Skeleton from '@/shared/ui/Skeleton.vue'
@@ -59,7 +64,7 @@ const currentContent = computed(() => snapshotText(submission.value?.snapshot, '
 const noteError = computed(() => decisionBlockedReason(modalAction.value, note.value))
 
 function errorMessage(error: unknown): string {
-  return error instanceof ApiError ? error.message : '操作失败，请稍后重试'
+  return readError(error, '操作失败，请稍后重试')
 }
 
 function upsert(task: ReviewTask): void {
@@ -76,9 +81,7 @@ async function loadTasks(): Promise<void> {
   loading.value = true
   listError.value = ''
   try {
-    // 审核队列接口待 moderation 模块实现：真接口模式下也走演示数据
-    const data = await api.mock.get<{ items: ReviewTask[] }>('/review/tasks')
-    tasks.value = data.items ?? []
+    tasks.value = await fetchReviewTasks()
   } catch (error) {
     listError.value = errorMessage(error)
   } finally {
@@ -107,7 +110,7 @@ async function claim(taskId: string): Promise<void> {
   busyId.value = taskId
   listError.value = ''
   try {
-    const claimed = await api.mock.post<ReviewTask>('/review/tasks/' + taskId + '/claim')
+    const claimed = await claimReviewTask(taskId)
     upsert(claimed)
     if (activeTask.value?.id === taskId) activeTask.value = { ...activeTask.value, ...claimed }
     notice.value = '已领取任务 ' + taskId
@@ -130,7 +133,7 @@ async function selectTask(task: ReviewTask): Promise<void> {
   }
   detailLoading.value = true
   try {
-    submission.value = await api.mock.get<SubmissionDetail>('/submissions/' + submissionId)
+    submission.value = await fetchSubmission(submissionId)
   } catch (error) {
     detailError.value = errorMessage(error)
   } finally {
@@ -162,10 +165,8 @@ async function submitDecision(): Promise<void> {
   submitting.value = true
   actionError.value = ''
   try {
-    const decided = await api.mock.post<ReviewTask>('/review/tasks/' + task.id + '/decision', {
-      action,
-      note: note.value.trim(),
-    })
+    // 后端字段是 action + reason（≥10 字），note 只在本地用，映射交给 adapter
+    const decided = await decideReviewTask(task.id, action, note.value)
     // 后端返回的任务已 COMPLETED；再兜一层，保证它一定从待审列表消失
     upsert({ ...task, ...decided, state: 'COMPLETED', completed_action: action })
     notice.value = '已' + reviewActionLabel(action) + '，任务 ' + task.id + ' 已完成'
@@ -200,7 +201,6 @@ onMounted(async () => {
     </EmptyState>
 
     <template v-else>
-      <DemoNotice :endpoint="pendingEndpoint('reviewQueue')" />
       <p v-if="notice" class="ok-banner">{{ notice }}</p>
       <p v-if="listError" class="error-text">{{ listError }}</p>
 
@@ -278,13 +278,19 @@ onMounted(async () => {
     <Modal :open="modalAction === 'approve'" title="确认通过" @close="closeModal">
       <p class="muted">通过后这次提交进入发布流程，备注可以先留空。</p>
       <label class="field">
-        <span class="label">备注（可空）</span>
+        <span class="label">备注（可空，填了就至少 10 字）</span>
         <textarea v-model="note" class="textarea" placeholder="例如：内容无误，可以发布" />
       </label>
+      <p v-if="noteError" class="error-text">{{ noteError }}</p>
       <p v-if="actionError" class="error-text">{{ actionError }}</p>
       <template #footer>
         <button class="btn ghost small" type="button" @click="closeModal">取消</button>
-        <button class="btn small" type="button" :disabled="submitting" @click="submitDecision">
+        <button
+          class="btn small"
+          type="button"
+          :disabled="!!noteError || submitting"
+          @click="submitDecision"
+        >
           {{ submitting ? '提交中…' : '确认通过' }}
         </button>
       </template>

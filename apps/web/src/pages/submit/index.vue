@@ -3,20 +3,22 @@
 import { computed, onMounted, ref } from 'vue'
 
 import type { Schemas } from '@/api/types'
-import { ApiError, api } from '@/shared/api'
-import { pendingEndpoint } from '@/shared/capabilities'
+import { errorMessage as readError } from '@/api/adapters'
+import { fetchMyDrafts, submitDraft, withdrawDraft } from '@/api/endpoints'
+import { api } from '@/shared/api'
 import { draftStateLabel, shortDate } from '@/shared/format'
 import { isLoggedIn } from '@/shared/session'
-import DemoNotice from '@/shared/ui/DemoNotice.vue'
 import EmptyState from '@/shared/ui/EmptyState.vue'
 import Modal from '@/shared/ui/Modal.vue'
 import Skeleton from '@/shared/ui/Skeleton.vue'
 
 import {
   canSubmit,
+  canWithdraw,
   draftCostLabel,
   latestReviewReason,
   markSubmitted,
+  markWithdrawn,
   nodeCountLabel,
   stateTone,
   submitButtonLabel,
@@ -38,21 +40,26 @@ const detailError = ref<Record<string, string>>({})
 const expandedId = ref<string | null>(null)
 
 const pendingDraft = ref<Draft | null>(null)
+const pendingAction = ref<'submit' | 'withdraw'>('submit')
 const submitting = ref(false)
 const submitError = ref('')
 
 const modalOpen = computed(() => pendingDraft.value !== null)
+const modalTitle = computed(() => (pendingAction.value === 'submit' ? '提交审核' : '撤回投稿'))
+const modalConfirmLabel = computed(() => {
+  if (submitting.value) return pendingAction.value === 'submit' ? '提交中…' : '撤回中…'
+  return pendingAction.value === 'submit' ? '确认提交' : '确认撤回'
+})
 
 function messageOf(error: unknown): string {
-  return error instanceof ApiError ? error.message : '网络开小差了，稍后再试'
+  return readError(error, '网络开小差了，稍后再试')
 }
 
 async function loadDrafts(quiet = false): Promise<void> {
   if (!quiet) loading.value = true
   listError.value = ''
   try {
-    const data = await api.get<{ items: Draft[] }>('/route-drafts')
-    drafts.value = data.items ?? []
+    drafts.value = await fetchMyDrafts()
   } catch (error) {
     listError.value = messageOf(error)
   } finally {
@@ -92,6 +99,13 @@ async function toggle(draft: Draft): Promise<void> {
 
 function openConfirm(draft: Draft): void {
   pendingDraft.value = draft
+  pendingAction.value = 'submit'
+  submitError.value = ''
+}
+
+function openWithdraw(draft: Draft): void {
+  pendingDraft.value = draft
+  pendingAction.value = 'withdraw'
   submitError.value = ''
 }
 
@@ -101,21 +115,26 @@ function closeConfirm(): void {
   submitError.value = ''
 }
 
-async function confirmSubmit(): Promise<void> {
+async function confirmAction(): Promise<void> {
   const draft = pendingDraft.value
   if (!draft || submitting.value) return
 
   submitting.value = true
   submitError.value = ''
   try {
-    // 送审接口还没实现：真接口模式下也用演示数据，草稿列表本身走真接口
-    await api.mock.post<Schemas['Submission']>(`/route-drafts/${draft.id}/submit`)
-    drafts.value = markSubmitted(drafts.value, draft.id)
-    successText.value = `「${draft.title}」已提交，正在审核中`
+    if (pendingAction.value === 'withdraw') {
+      await withdrawDraft(draft.id)
+      drafts.value = markWithdrawn(drafts.value, draft.id)
+      successText.value = `「${draft.title}」已撤回，可以继续编辑`
+    } else {
+      // 422 节点不足、409 DRAFT_LOCKED 都以 error.message 呈现
+      await submitDraft(draft.id)
+      drafts.value = markSubmitted(drafts.value, draft.id)
+      successText.value = `「${draft.title}」已提交，正在审核中`
+    }
     pendingDraft.value = null
     await loadDrafts(true)
   } catch (error) {
-    // 422 节点不足、409 DRAFT_LOCKED 都以 error.message 呈现
     submitError.value = messageOf(error)
   } finally {
     submitting.value = false
@@ -142,8 +161,6 @@ onMounted(() => {
       <h2>我的路线</h2>
       <p class="muted">草稿状态与提交审核</p>
     </div>
-
-    <DemoNotice v-if="isLoggedIn" :endpoint="pendingEndpoint('draftSubmit')" />
 
     <div v-if="!isLoggedIn" class="card">
       <EmptyState title="登录后才能管理草稿" hint="草稿列表和提交审核都需要登录。">
@@ -206,6 +223,14 @@ onMounted(() => {
             <button v-else class="btn small" type="button" disabled>
               {{ submitButtonLabel(stateOf(draft)) }}
             </button>
+            <button
+              v-if="canWithdraw(stateOf(draft))"
+              class="btn ghost small"
+              type="button"
+              @click="openWithdraw(draft)"
+            >
+              撤回投稿
+            </button>
             <RouterLink
               v-if="canSubmit(stateOf(draft))"
               class="btn ghost small"
@@ -233,16 +258,17 @@ onMounted(() => {
       </div>
     </template>
 
-    <Modal :open="modalOpen" title="提交审核" @close="closeConfirm">
-      <p>提交后草稿会被锁定，审核通过前不能再修改，也不能再提交新版本。</p>
+    <Modal :open="modalOpen" :title="modalTitle" @close="closeConfirm">
+      <p v-if="pendingAction === 'submit'">提交后草稿会被锁定，审核通过前不能再修改，也不能再提交新版本。</p>
+      <p v-else>撤回后草稿回到可编辑状态，审核任务同时取消，之后可以重新提交。</p>
       <p class="muted">{{ pendingDraft?.title }}</p>
       <p v-if="submitError" class="error-text">{{ submitError }}</p>
       <template #footer>
         <button class="btn ghost" type="button" :disabled="submitting" @click="closeConfirm">
           再想想
         </button>
-        <button class="btn" type="button" :disabled="submitting" @click="confirmSubmit">
-          {{ submitting ? '提交中…' : '确认提交' }}
+        <button class="btn" type="button" :disabled="submitting" @click="confirmAction">
+          {{ modalConfirmLabel }}
         </button>
       </template>
     </Modal>

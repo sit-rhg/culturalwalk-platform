@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 
+import { errorMessage as readError } from '@/api/adapters'
+import { createRouteComment, fetchRouteComments, pinRouteComment } from '@/api/endpoints'
 import type { Schemas } from '@/api/types'
-import { ApiError, api } from '@/shared/api'
 import { relativeTime } from '@/shared/format'
-import { isAdmin, isLoggedIn } from '@/shared/session'
+import { isLoggedIn } from '@/shared/session'
 import EmptyState from '@/shared/ui/EmptyState.vue'
 import Skeleton from '@/shared/ui/Skeleton.vue'
 
@@ -13,7 +14,8 @@ import { sortComments } from './logic'
 
 type Comment = Schemas['Comment']
 
-const props = defineProps<{ routeId: string }>()
+// 置顶权限由路线详情判断（后端只认路线作者，管理员也不行）
+const props = defineProps<{ routeId: string; canPin?: boolean }>()
 
 const items = ref<Comment[]>([])
 const loading = ref(true)
@@ -21,10 +23,8 @@ const loadError = ref('')
 const body = ref('')
 const posting = ref(false)
 const formError = ref('')
+const successHint = ref('')
 const pinningId = ref('')
-
-// 置顶是编辑动作，普通用户看不到按钮（真实接口会再校验一次）
-const canPin = computed(() => isAdmin.value)
 
 async function load(): Promise<void> {
   if (!props.routeId) {
@@ -34,14 +34,10 @@ async function load(): Promise<void> {
   loading.value = true
   loadError.value = ''
   try {
-    // 评论接口还没实现：真接口模式下也走演示数据
-    const res = await api.mock.get<{ items?: Comment[] }>(
-      '/routes/' + encodeURIComponent(props.routeId) + '/comments',
-    )
-    items.value = sortComments(res.items ?? [])
+    items.value = sortComments(await fetchRouteComments(props.routeId))
   } catch (error) {
     items.value = []
-    loadError.value = error instanceof ApiError ? error.message : '评论加载失败'
+    loadError.value = readError(error, '评论加载失败')
   } finally {
     loading.value = false
   }
@@ -52,6 +48,7 @@ watch(() => props.routeId, load)
 
 async function submit(): Promise<void> {
   formError.value = ''
+  successHint.value = ''
   const text = body.value.trim()
   if (!text) {
     formError.value = '评论不能为空'
@@ -59,13 +56,12 @@ async function submit(): Promise<void> {
   }
   posting.value = true
   try {
-    await api.mock.post<Comment>('/routes/' + encodeURIComponent(props.routeId) + '/comments', {
-      body: text,
-    })
+    await createRouteComment(props.routeId, text)
     body.value = ''
+    successHint.value = '评论已发表'
     await load()
   } catch (error) {
-    formError.value = error instanceof ApiError ? error.message : '发表失败，稍后再试'
+    formError.value = readError(error, '发表失败，稍后再试')
   } finally {
     posting.value = false
   }
@@ -74,11 +70,13 @@ async function submit(): Promise<void> {
 async function pin(id: string): Promise<void> {
   pinningId.value = id
   formError.value = ''
+  successHint.value = ''
   try {
-    await api.mock.post<Comment>('/comments/' + encodeURIComponent(id) + '/pin')
+    await pinRouteComment(id)
+    successHint.value = '已置顶'
     await load()
   } catch (error) {
-    formError.value = error instanceof ApiError ? error.message : '置顶失败'
+    formError.value = readError(error, '置顶失败')
   } finally {
     pinningId.value = ''
   }
@@ -123,6 +121,7 @@ async function pin(id: string): Promise<void> {
         <textarea v-model="body" class="textarea" placeholder="路况、门票、讲解时间都可以写" />
       </label>
       <p v-if="formError" class="error-text">{{ formError }}</p>
+      <p v-else-if="successHint" class="ok-text">{{ successHint }}</p>
       <button class="btn small" type="submit" :disabled="posting">
         {{ posting ? '发表中…' : '发表评论' }}
       </button>
@@ -188,6 +187,10 @@ async function pin(id: string): Promise<void> {
 
 .login-hint {
   margin: 0;
+}
+
+.ok-text {
+  color: #2f7d4f;
 }
 
 .link {

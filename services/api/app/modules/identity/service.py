@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.deps import create_access_token
-from app.core.errors import Conflict, Unauthorized
+from app.core.errors import Conflict, NotFound, Unauthorized
 from app.modules.identity.models import (
     ROLE_USER,
     STATUS_ACTIVE,
@@ -35,7 +35,13 @@ from app.modules.identity.models import (
     utcnow,
 )
 from app.modules.identity.models import Session as LoginSession
-from app.modules.identity.repository import IdentityRepository
+from app.modules.identity.repository import IdentityRepository, PublishedRoute
+from app.modules.identity.schemas import (
+    ProfileAuthorOut,
+    ProfileRouteOut,
+    UserOut,
+    UserProfileOut,
+)
 
 # 令牌类型：access 由 app.core.deps 校验，refresh 只在本模块校验
 TYP_ACCESS = "access"
@@ -187,6 +193,23 @@ class IdentityService:
             raise Unauthorized("登录已失效，请重新登录")
         return user
 
+    def profile(self, user_id: uuid.UUID) -> UserProfileOut:
+        """公开主页：用户资料 + 已发布路线，谁都能看。
+
+        不存在与已停用一律 404：这个端点是公开的，不能让外部靠
+        「404 还是 403」推断某个账号是否存在、是不是被封了。
+        """
+        user = self.repo.get_user(user_id)
+        if user is None or user.status != STATUS_ACTIVE:
+            raise NotFound("用户不存在")
+        return UserProfileOut(
+            user=UserOut.model_validate(user),
+            published_routes=[
+                _profile_route(row, user=user)
+                for row in self.repo.published_routes(owner_id=user.id)
+            ],
+        )
+
     # ===== 内部 =====
     def _issue(self, user: User) -> IssuedTokens:
         """先定 session id 再签令牌：refresh 的 sid 与库里的行一次成形，不需要占位值。"""
@@ -221,3 +244,27 @@ def _normalize_username(raw: str) -> str:
 def _normalize_email(raw: str | None) -> str | None:
     value = (raw or "").strip().lower()
     return value or None
+
+
+def _profile_route(row: PublishedRoute, *, user: User) -> ProfileRouteOut:
+    """把一条已发布版本翻成主页卡片。
+
+    snapshot 是自由 JSON，历史版本可能缺字段或类型不对；逐字段判类型再取值，
+    缺了就退回草稿标题 / 空值，不让一份坏快照把整个主页打成 500。
+    """
+    snapshot = row.snapshot
+    title = snapshot.get("title")
+    summary = snapshot.get("summary")
+    tags = snapshot.get("theme_tags")
+    duration = snapshot.get("duration_minutes")
+    return ProfileRouteOut(
+        id=row.route_id,
+        title=title.strip() if isinstance(title, str) and title.strip() else row.draft_title,
+        summary=summary if isinstance(summary, str) and summary else None,
+        channel="user",
+        author=ProfileAuthorOut(id=user.id, username=user.username),
+        theme_tags=[tag for tag in tags if isinstance(tag, str)] if isinstance(tags, list) else [],
+        duration_minutes=duration
+        if isinstance(duration, int) and not isinstance(duration, bool)
+        else None,
+    )

@@ -53,6 +53,38 @@ class UserOut(BaseModel):
         return value
 
 
+class ProfileAuthorOut(BaseModel):
+    """openapi.yaml#RouteSummary.author。主页只露作者 id 和用户名，不带邮箱等账号信息。"""
+
+    id: uuid.UUID
+    username: str
+
+
+class ProfileRouteOut(BaseModel):
+    """openapi.yaml#RouteSummary 的子集，用于公开主页的「已发布路线」卡片。
+
+    cost / comment_count / favorite_count 在契约里都是可选字段，但它们是 community
+    的聚合口径（评论数、收藏数由那边数）。identity 不复刻别人的统计规则，
+    宁可不返回，也不返回一个数不上口径的值。
+    """
+
+    id: uuid.UUID
+    title: str
+    summary: str | None = None
+    cover_url: str | None = None
+    channel: str = "user"
+    author: ProfileAuthorOut | None = None
+    theme_tags: list[str] = Field(default_factory=list)
+    duration_minutes: int | None = None
+
+
+class UserProfileOut(BaseModel):
+    """openapi.yaml#UserProfile。user 用 UserOut（不含 email），公开主页不返回敏感字段。"""
+
+    user: UserOut
+    published_routes: list[ProfileRouteOut] = Field(default_factory=list)
+
+
 class TokenPairOut(BaseModel):
     """openapi.yaml#TokenPair。user 必带，expires_in 可选（这里给实际值）。"""
 

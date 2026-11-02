@@ -6,7 +6,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from app.modules.planner.models import (
@@ -46,6 +46,61 @@ class PlannerRepository:
     def get_itinerary(self, itinerary_id: uuid.UUID) -> Itinerary | None:
         stmt = select(Itinerary).where(Itinerary.id == itinerary_id, Itinerary.deleted_at.is_(None))
         return self.db.scalars(stmt).first()
+
+    def list_for_user(
+        self,
+        *,
+        user_id: uuid.UUID,
+        after: tuple[datetime, uuid.UUID] | None,
+        limit: int,
+    ) -> list[Itinerary]:
+        """按 (created_at, id) 倒序取一页行程，after 是上一页最后一条的位置。
+
+        已软删的行程一律不出现：deleted_at 只留给后台任务和幂等判断用，
+        用户不该在列表里再见到它。
+        """
+        stmt = select(Itinerary).where(
+            Itinerary.user_id == user_id,
+            Itinerary.deleted_at.is_(None),
+        )
+        if after is not None:
+            created_at, itinerary_id = after
+            # 不走行值比较：SQLite 与 PostgreSQL 对复合比较的支持不一致
+            stmt = stmt.where(
+                or_(
+                    Itinerary.created_at < created_at,
+                    and_(Itinerary.created_at == created_at, Itinerary.id < itinerary_id),
+                )
+            )
+        stmt = stmt.order_by(Itinerary.created_at.desc(), Itinerary.id.desc()).limit(limit)
+        return list(self.db.scalars(stmt))
+
+    def latest_runs(self, itinerary_ids: list[uuid.UUID]) -> dict[uuid.UUID, PlanRun]:
+        """批量取每张行程最近一次生成记录，key 是行程 id。
+
+        列表页每条都要带 run_id；逐条查会变成 N+1，一次 IN 查询按时间倒序
+        扫一遍，每张行程第一次出现的 run 就是最新的。
+        """
+        if not itinerary_ids:
+            return {}
+        stmt = (
+            select(PlanRun)
+            .where(PlanRun.itinerary_id.in_(itinerary_ids))
+            .order_by(PlanRun.created_at.desc(), PlanRun.id.desc())
+        )
+        result: dict[uuid.UUID, PlanRun] = {}
+        for run in self.db.scalars(stmt):
+            result.setdefault(run.itinerary_id, run)
+        return result
+
+    def soft_delete(self, itinerary: Itinerary, *, when: datetime) -> None:
+        """软删除：只打时间戳，内容留给后台任务判断"行程已不存在"。
+
+        不物理删：plan_runs 上有 ON DELETE CASCADE 的关联数据，
+        删了会把"生成过几次、为什么失败"一并抹掉，审计也就无从对账。
+        """
+        itinerary.deleted_at = when
+        self.db.flush()
 
     def latest_run(self, itinerary_id: uuid.UUID) -> PlanRun | None:
         """最近一次生成记录。

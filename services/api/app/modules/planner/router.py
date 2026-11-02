@@ -9,13 +9,20 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, status
+from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.deps import CurrentUser, CurrentUserDep
 from app.core.errors import Unauthorized
-from app.modules.planner.schemas import PlanDetailOut, PlanIn, PlanOut, ToDraftOut
+from app.core.pagination import DEFAULT_LIMIT, MAX_LIMIT
+from app.modules.planner.schemas import (
+    PlanDetailOut,
+    PlanIn,
+    PlanOut,
+    PlansPageOut,
+    ToDraftOut,
+)
 from app.modules.planner.service import PlannerService
 
 router = APIRouter(prefix="/plans", tags=["plans"])
@@ -31,6 +38,10 @@ def _user_uuid(user: CurrentUser) -> uuid.UUID:
         return uuid.UUID(user.id)
     except ValueError as exc:
         raise Unauthorized("登录信息已失效，请重新登录") from exc
+
+
+def _request_id(request: Request) -> str | None:
+    return getattr(request.state, "request_id", None)
 
 
 @router.post(
@@ -57,6 +68,21 @@ def create_plan(
         idempotency_key=idempotency_key,
     )
     return PlanOut.from_itinerary(created.itinerary, run_id=created.run.id)
+
+
+@router.get("", response_model=PlansPageOut, summary="我的行程列表")
+def list_plans(
+    user: CurrentUserDep,
+    db: Annotated[Session, Depends(get_db)],
+    cursor: Annotated[str | None, Query(description="上一页返回的 next_cursor")] = None,
+    limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
+) -> PlansPageOut:
+    """只列当前登录用户自己的行程，按创建时间倒序游标翻页。
+
+    列表里带每条行程最近一次 run_id：前端点进详情轮询时不必再猜
+    "我看的还是不是提交时那一份"。
+    """
+    return PlannerService(db).list_plans(user_id=_user_uuid(user), cursor=cursor, limit=limit)
 
 
 @router.get(
@@ -103,9 +129,26 @@ def plan_to_draft(
     return ToDraftOut(draft_id=draft_id)
 
 
-# ===== 待实现端点（认领任务卡后逐条填） =====
-#   GET    /plans                                           我的行程列表
-#   DELETE /plans/{plan_id}                                 删除行程
+@router.delete("/{plan_id}", status_code=status.HTTP_204_NO_CONTENT, summary="删除行程")
+def delete_plan(
+    plan_id: uuid.UUID,
+    user: CurrentUserDep,
+    db: Annotated[Session, Depends(get_db)],
+    request: Request,
+) -> Response:
+    """软删自己的行程；别人的和不存在的都回 404，不泄露存在性。
+
+    写一条 `plan.delete` 审计：删除是用户对数据的最终处置，
+    事后追查"谁在什么时候删了哪张行程"只能靠它。
+    """
+    PlannerService(db).delete_plan(
+        user_id=_user_uuid(user),
+        plan_id=plan_id,
+        actor=user,
+        request_id=_request_id(request),
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
 
 # --- 多 Agent 编排契约（实现见 agents/） -------------------------------------
 # 每个 Agent 只做一件事，输入输出都是 PlanContext，禁止互相 import 具体实现：

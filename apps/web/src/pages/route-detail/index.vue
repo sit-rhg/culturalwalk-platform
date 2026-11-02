@@ -3,9 +3,10 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 
 import type { Schemas } from '@/api/types'
+import { errorMessage as readError, favoriteState } from '@/api/adapters'
+import { fetchRouteDetail, setRouteFavorite } from '@/api/endpoints'
 import CommentThread from '@/modules/comment-thread/index.vue'
-import { ApiError, api } from '@/shared/api'
-import { pendingEndpoint } from '@/shared/capabilities'
+import { ApiError } from '@/shared/api'
 import {
   channelLabel,
   confidenceLabel,
@@ -13,8 +14,7 @@ import {
   moneyRange,
   transportLabel,
 } from '@/shared/format'
-import { isLoggedIn } from '@/shared/session'
-import DemoNotice from '@/shared/ui/DemoNotice.vue'
+import { currentUser, isLoggedIn } from '@/shared/session'
 import EmptyState from '@/shared/ui/EmptyState.vue'
 import Skeleton from '@/shared/ui/Skeleton.vue'
 
@@ -43,6 +43,7 @@ const loadError = ref('')
 const notFound = ref(false)
 const favoriteBusy = ref(false)
 const favoriteHint = ref('')
+const favoriteOk = ref(false)
 
 async function load(): Promise<void> {
   const id = routeId.value
@@ -51,12 +52,11 @@ async function load(): Promise<void> {
   notFound.value = false
   favoriteHint.value = ''
   try {
-    // 路线详情/收藏接口还没实现：真接口模式下也走演示数据
-    detail.value = await api.mock.get<RouteDetail>('/routes/' + encodeURIComponent(id))
+    detail.value = await fetchRouteDetail(id)
   } catch (error) {
     detail.value = null
     notFound.value = error instanceof ApiError && error.status === 404
-    loadError.value = error instanceof ApiError ? error.message : '网络异常，稍后再试'
+    loadError.value = readError(error, '网络异常，稍后再试')
   } finally {
     loading.value = false
   }
@@ -69,22 +69,30 @@ const days = computed(() => detail.value?.days ?? [])
 const allItems = computed<RouteItem[]>(() => days.value.flatMap((day) => day.items ?? []))
 const mapPins = computed(() => buildMapPins(allItems.value))
 const errorTitle = computed(() => (notFound.value ? '这条路线不存在或已下架' : '路线加载失败'))
+/** 后端只允许路线作者置顶评论，管理员也不行 */
+const canPin = computed(
+  () => Boolean(detail.value?.author?.id) && detail.value?.author?.id === currentUser.value?.id,
+)
 
 async function toggleFavorite(): Promise<void> {
   if (!detail.value || favoriteBusy.value) return
   if (!isLoggedIn.value) {
     favoriteHint.value = '登录后才能收藏'
+    favoriteOk.value = false
     return
   }
+  const target = !detail.value.is_favorited
   favoriteBusy.value = true
   favoriteHint.value = ''
   try {
-    const res = await api.mock.post<{ is_favorited: boolean }>(
-      '/routes/' + encodeURIComponent(routeId.value) + '/favorite',
-    )
-    detail.value.is_favorited = res.is_favorited
+    // 收藏接口返回 204，没有 body，收藏态只能在本地翻转
+    const next = await setRouteFavorite(routeId.value, target)
+    if (detail.value) detail.value = favoriteState(detail.value, next)
+    favoriteOk.value = true
+    favoriteHint.value = next ? '已加入收藏' : '已取消收藏'
   } catch (error) {
-    favoriteHint.value = error instanceof ApiError ? error.message : '收藏失败，稍后再试'
+    favoriteOk.value = false
+    favoriteHint.value = readError(error, '收藏失败，稍后再试')
   } finally {
     favoriteBusy.value = false
   }
@@ -93,7 +101,6 @@ async function toggleFavorite(): Promise<void> {
 
 <template>
   <div class="route-detail">
-    <DemoNotice :endpoint="pendingEndpoint('routeDetail')" />
     <div v-if="loading" class="stack">
       <div class="card"><Skeleton :lines="3" height="20px" /></div>
       <div class="card"><Skeleton :lines="5" /></div>
@@ -136,7 +143,7 @@ async function toggleFavorite(): Promise<void> {
             {{ detail.is_favorited ? '已收藏' : '收藏' }}
           </button>
           <RouterLink v-if="!isLoggedIn" class="muted" to="/login">登录后收藏</RouterLink>
-          <span v-if="favoriteHint" class="error-text">{{ favoriteHint }}</span>
+          <span v-if="favoriteHint" :class="favoriteOk ? 'ok-text' : 'error-text'">{{ favoriteHint }}</span>
         </div>
       </header>
 
@@ -214,7 +221,7 @@ async function toggleFavorite(): Promise<void> {
       </div>
 
       <h3 class="section-title">评论</h3>
-      <CommentThread :route-id="routeId" />
+      <CommentThread :route-id="routeId" :can-pin="canPin" />
     </template>
   </div>
 </template>
@@ -250,6 +257,10 @@ async function toggleFavorite(): Promise<void> {
 
 .back {
   margin-top: 10px;
+}
+
+.ok-text {
+  color: #2f7d4f;
 }
 
 .day-head {

@@ -27,6 +27,11 @@ export function canSubmit(state: DraftState): boolean {
   return state === 'EDITING'
 }
 
+/** 审核中的草稿可以撤回，撤回后回到可编辑。 */
+export function canWithdraw(state: DraftState): boolean {
+  return state === 'SUBMITTED_LOCKED'
+}
+
 export function submitButtonLabel(state: DraftState): string {
   switch (state) {
     case 'EDITING':
@@ -43,6 +48,11 @@ export function submitButtonLabel(state: DraftState): string {
 /** 提交成功后就地改状态，不必等列表回来才变「审核中」。 */
 export function markSubmitted(items: readonly Draft[], id: string): Draft[] {
   return items.map((item) => (item.id === id ? { ...item, state: 'SUBMITTED_LOCKED' } : item))
+}
+
+/** 撤回同样就地改状态，后端返回的草稿是 EDITING。 */
+export function markWithdrawn(items: readonly Draft[], id: string): Draft[] {
+  return items.map((item) => (item.id === id ? { ...item, state: 'EDITING' } : item))
 }
 
 /** 成本以「分」存，展示才换成元；缺价节点数单独说明，否则区间会骗人。 */

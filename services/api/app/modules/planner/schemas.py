@@ -133,6 +133,16 @@ class PlanOut(BaseModel):
         )
 
 
+class PlansPageOut(BaseModel):
+    """GET /plans 的响应（契约里是内联对象 {items, next_cursor}）。
+
+    items 复用 PlanOut：列表页和回执看到的是同一张行程，字段不允许长不一样。
+    """
+
+    items: list[PlanOut] = Field(default_factory=list)
+    next_cursor: str | None = None
+
+
 class PlanStepOut(BaseModel):
     """一个 Agent 的留痕（契约 PlanDetail.steps）。没跑完的步骤 duration_ms 为空。"""
 
