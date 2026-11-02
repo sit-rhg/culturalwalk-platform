@@ -20,6 +20,12 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import Conflict, Forbidden, NotFound
 from app.modules.planner.agents.base import PlaceSource, PlanContext
+from app.modules.planner.draft import (
+    RouteDraftPort,
+    draft_spec,
+    routes_draft_port,
+    routes_idempotency_key,
+)
 from app.modules.planner.models import (
     AgentStep,
     Itinerary,
@@ -517,6 +523,56 @@ class PlannerService:
             ),
             days_plan=days_plan,
         )
+
+    # ----- 转路线草稿（PL-07） -----------------------------------------------
+
+    def to_draft(
+        self,
+        *,
+        user_id: uuid.UUID,
+        plan_id: uuid.UUID,
+        idempotency_key: str,
+        port: RouteDraftPort | None = None,
+    ) -> uuid.UUID:
+        """把一份 READY 的行程转成 routes 模块的草稿，返回草稿 id。
+
+        只允许 READY：生成中的行程内容还是空的，转出来的草稿会是一张白纸；
+        失败状态的内容半截，用户看到会以为规划成功了。
+        """
+        itinerary = self.repo.get_itinerary(plan_id)
+        if itinerary is None:
+            raise NotFound("行程不存在")
+        if itinerary.user_id != user_id:
+            raise Forbidden("这不是你的行程")
+        if itinerary.state != PlanState.READY:
+            raise Conflict(
+                "这份行程还没生成完，暂时不能转成草稿",
+                code="PLAN_NOT_READY",
+                details=[{"field": "state", "reason": itinerary.state.value}],
+            )
+
+        spec = draft_spec(itinerary, self.repo.days_for_itinerary(itinerary.id))
+        if not spec.nodes:
+            raise Conflict(
+                "这份行程里没有可转换的点位",
+                code="PLAN_EMPTY",
+                details=[{"field": "days_plan", "reason": "一个带点位的日程都没有"}],
+            )
+
+        drafts = port or routes_draft_port(self.db)
+        # 幂等键由行程 id 派生：用户手滑点两次"生成草稿"，落到的还是同一份。
+        route_key = routes_idempotency_key(itinerary.id)
+        draft_id = drafts.create(owner_id=user_id, spec=spec, idempotency_key=route_key)
+        drafts.replace_nodes(
+            draft_id=draft_id,
+            owner_id=user_id,
+            nodes=spec.nodes,
+            idempotency_key=f"{route_key}:nodes",
+        )
+        logger.info(
+            "行程转草稿：plan=%s draft=%s nodes=%d", itinerary.id, draft_id, len(spec.nodes)
+        )
+        return draft_id
 
     # ----- 后台任务（PL-05） -------------------------------------------------
 

@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.core.deps import CurrentUser, CurrentUserDep
 from app.core.errors import Unauthorized
-from app.modules.planner.schemas import PlanDetailOut, PlanIn, PlanOut
+from app.modules.planner.schemas import PlanDetailOut, PlanIn, PlanOut, ToDraftOut
 from app.modules.planner.service import PlannerService
 
 router = APIRouter(prefix="/plans", tags=["plans"])
@@ -78,10 +78,34 @@ def get_plan(
     return PlannerService(db).detail(user_id=_user_uuid(user), plan_id=plan_id)
 
 
+@router.post(
+    "/{plan_id}/to-draft",
+    response_model=ToDraftOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="行程转为路线草稿",
+)
+def plan_to_draft(
+    plan_id: uuid.UUID,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=64)],
+    user: CurrentUserDep,
+    db: Annotated[Session, Depends(get_db)],
+) -> ToDraftOut:
+    """把一份生成好的行程搬成路线草稿，进入 P3 的投稿审核流程。
+
+    节点顺序与来源原样保留（验收口径），价格缺失的项保持空值，
+    让草稿里也能看出"这一站票价待核实"，而不是悄悄写成 0 元。
+    """
+    draft_id = PlannerService(db).to_draft(
+        user_id=_user_uuid(user),
+        plan_id=plan_id,
+        idempotency_key=idempotency_key,
+    )
+    return ToDraftOut(draft_id=draft_id)
+
+
 # ===== 待实现端点（认领任务卡后逐条填） =====
 #   GET    /plans                                           我的行程列表
 #   DELETE /plans/{plan_id}                                 删除行程
-#   POST   /plans/{plan_id}/to-draft                        行程转路线草稿
 
 # --- 多 Agent 编排契约（实现见 agents/） -------------------------------------
 # 每个 Agent 只做一件事，输入输出都是 PlanContext，禁止互相 import 具体实现：

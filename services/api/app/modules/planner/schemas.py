@@ -213,3 +213,13 @@ class PlanDetailOut(PlanOut):
     steps: list[PlanStepOut] = Field(default_factory=list)
     cost: CostSummaryOut = Field(default_factory=CostSummaryOut)
     days_plan: list[PlanDayOut] = Field(default_factory=list)
+
+
+class ToDraftOut(BaseModel):
+    """POST /plans/{plan_id}/to-draft 的响应（契约里是内联对象，只有 draft_id）。
+
+    只回编号不回整份草稿：草稿详情由 routes 模块的 GET /route-drafts/{id} 提供，
+    两个模块各管自己的形状，避免 planner 复制一份别人的 DTO。
+    """
+
+    draft_id: uuid.UUID
