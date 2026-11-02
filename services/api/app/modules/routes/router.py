@@ -21,6 +21,7 @@ from app.modules.routes.schemas import (
     RouteDraftListOut,
     RouteDraftOut,
     RouteDraftPatch,
+    RouteNodesReplace,
 )
 from app.modules.routes.service import RoutesService
 
@@ -120,3 +121,25 @@ def patch_draft(
 def delete_draft(draft_id: uuid.UUID, user: CurrentUserDep, db: DbDep) -> Response:
     RoutesService(db).delete(draft_id=draft_id, owner_id=_user_id_of(user))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.put(
+    "/{draft_id}/nodes",
+    summary="整表替换草稿节点（顺序=数组顺序）",
+    response_model=RouteDraftDetailOut,
+)
+def replace_nodes(
+    draft_id: uuid.UUID,
+    payload: RouteNodesReplace,
+    user: CurrentUserDep,
+    db: DbDep,
+    if_match: Annotated[int, Header(alias="If-Match", description="草稿的 lock_version")],
+    idempotency_key: IdempotencyKey,
+) -> RouteDraftDetailOut:
+    return RoutesService(db).replace_nodes(
+        draft_id=draft_id,
+        owner_id=_user_id_of(user),
+        payload=payload,
+        if_match=if_match,
+        idempotency_key=idempotency_key,
+    )

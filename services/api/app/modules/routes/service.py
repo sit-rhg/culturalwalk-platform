@@ -18,13 +18,24 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import Conflict, Forbidden, NotFound, PreconditionFailed, ValidationFailed
 from app.core.pagination import decode_cursor, encode_cursor
-from app.modules.routes.models import DraftState, RouteDraft
+from app.modules.catalog.schemas import PlaceOut
+from app.modules.catalog.service import CatalogService
+from app.modules.routes.models import DraftState, RouteDraft, RouteNode
 from app.modules.routes.repository import RoutesRepository
 from app.modules.routes.schemas import (
+    CostSummaryOut,
     RouteDraftCreate,
     RouteDraftDetailOut,
+    RouteDraftOut,
     RouteDraftPatch,
+    RouteNodeInput,
+    RouteNodeOut,
+    RouteNodesReplace,
 )
+
+# 与 catalog 的 PlaceStatus.VERIFIED 落库值一致（小写）。这里不 import 别人的
+# ORM 枚举，避免 routes 依赖 catalog 的表定义；值变化由契约测试兜住。
+_PUBLISHED_PLACE_STATUS = "verified"
 
 
 def _input_hash(payload: BaseModel, *, exclude_unset: bool = False) -> str:
@@ -148,8 +159,7 @@ class RoutesService:
     # ===== 草稿详情 =====
     def get_detail(self, *, draft_id: uuid.UUID, owner_id: uuid.UUID) -> RouteDraftDetailOut:
         draft = self._load_owned(draft_id=draft_id, owner_id=owner_id)
-        # 节点表由 RT-02 实现；在那之前 nodes 恒为空，cost 全 0。
-        return RouteDraftDetailOut.model_validate(draft)
+        return self._detail(draft)
 
     # ===== 更新草稿 =====
     def patch(
@@ -207,6 +217,122 @@ class RoutesService:
         self.db.refresh(draft)
         return draft
 
+    # ===== 节点整表替换 =====
+    def replace_nodes(
+        self,
+        *,
+        draft_id: uuid.UUID,
+        owner_id: uuid.UUID,
+        payload: RouteNodesReplace,
+        if_match: int,
+        idempotency_key: str,
+    ) -> RouteDraftDetailOut:
+        draft = self._load_owned(draft_id=draft_id, owner_id=owner_id)
+        request_hash = _input_hash(payload)
+        # 和 PATCH 一样，重放判断排在状态检查之前：成功提交后草稿被锁定，
+        # 客户端拿同一个 key 重试，应该拿到那次成功的结果，而不是 409。
+        if draft.nodes_key == idempotency_key:
+            if draft.nodes_hash != request_hash:
+                raise Conflict(
+                    "这个 Idempotency-Key 已经用于另一份不同的节点，请换一个新的 key",
+                    code="IDEMPOTENCY_KEY_REUSED",
+                    details=[
+                        {
+                            "field": "Idempotency-Key",
+                            "reason": "already_used_with_different_body",
+                        }
+                    ],
+                )
+            return self._detail(draft)
+
+        if draft.state is not DraftState.EDITING:
+            raise Conflict(
+                "草稿已提交或已归档，不能再调整节点；需要改请新建草稿",
+                code="DRAFT_NOT_EDITABLE",
+            )
+
+        if if_match != draft.lock_version:
+            raise PreconditionFailed(
+                "草稿已被其他窗口修改，请刷新后再改",
+                code="STALE_DRAFT_VERSION",
+                details=[{"field": "If-Match", "reason": "lock_version 已变化"}],
+            )
+
+        # 先把地点全部解析一遍再动库：有一个不存在就整单 422，
+        # 不能让前几个节点落库、后一个失败，留下半份路线。
+        places = self._resolve_places(payload.nodes)
+        updated = self.repo.patch_cas(
+            draft_id=draft_id,
+            expected_version=if_match,
+            values={"nodes_key": idempotency_key, "nodes_hash": request_hash},
+        )
+        if updated == 0:
+            raise PreconditionFailed(
+                "草稿已被其他窗口修改，请刷新后再改",
+                code="STALE_DRAFT_VERSION",
+                details=[{"field": "If-Match", "reason": "lock_version 已变化"}],
+            )
+
+        self.repo.replace_nodes(
+            draft_id,
+            [
+                RouteNode(
+                    draft_id=draft_id,
+                    place_id=node.place_id,
+                    # 顺序由数组下标决定，服务端重排 1..N；客户端不能自带 position。
+                    position=position,
+                    stay_minutes=node.stay_minutes,
+                    transport=node.transport,
+                    note=node.note,
+                    price_min=node.price_min,
+                    price_max=node.price_max,
+                )
+                for position, node in enumerate(payload.nodes, start=1)
+            ],
+        )
+        self.db.refresh(draft)
+        return self._detail(draft, places=places)
+
+    def _resolve_places(self, nodes: list[RouteNodeInput]) -> dict[uuid.UUID, PlaceOut]:
+        """把节点引用的地点解析成公开 DTO；有一个不存在就整体 422。
+
+        走 CatalogService 而不是直接查表：是否已发布、草稿一律 404 的口径
+        只有 catalog 自己说了算，routes 不该复制一份过滤条件。
+        """
+        catalog = CatalogService(self.db)
+        resolved: dict[uuid.UUID, PlaceOut] = {}
+        for index, node in enumerate(nodes):
+            if node.place_id in resolved:
+                continue
+            try:
+                place = PlaceOut.model_validate(catalog.get_place(node.place_id))
+            except NotFound as exc:
+                raise ValidationFailed(
+                    "节点引用的地点不存在或尚未发布",
+                    details=[
+                        {
+                            # 与 FastAPI 校验错误的 field 口径一致（点号分层），
+                            # 前端才能用同一个 setFieldError 处理两种 422。
+                            "field": f"nodes.{index}.place_id",
+                            "reason": "地点不存在或未发布",
+                        }
+                    ],
+                ) from exc
+            # get_place 在 catalog 的「公开读只读已发布」落地前仍可能返回草稿；
+            # 路线节点必须是已发布地点，这里再挡一次（等 PR #95 合入后是双保险）。
+            if place.status != _PUBLISHED_PLACE_STATUS:
+                raise ValidationFailed(
+                    "节点引用的地点不存在或尚未发布",
+                    details=[
+                        {
+                            "field": f"nodes.{index}.place_id",
+                            "reason": "地点不存在或未发布",
+                        }
+                    ],
+                )
+            resolved[node.place_id] = place
+        return resolved
+
     def _patch_values(self, payload: RouteDraftPatch) -> dict[str, Any]:
         """只把请求里真正出现的字段转成列更新；没出现的保持原值。"""
         values: dict[str, Any] = {}
@@ -236,6 +362,45 @@ class RoutesService:
         self.repo.delete(draft)
 
     # ===== 内部 =====
+    def _detail(
+        self,
+        draft: RouteDraft,
+        *,
+        places: dict[uuid.UUID, PlaceOut] | None = None,
+    ) -> RouteDraftDetailOut:
+        """把草稿 + 节点渲染成详情。
+
+        places 是本次写入已经解析过的缓存，省掉重复查询；读详情时按需解析。
+        地点在加入草稿之后被下线/删除的节点直接跳过——不能 500，否则作者
+        连打开草稿去替换它的机会都没有。
+        """
+        cache: dict[uuid.UUID, PlaceOut | None] = dict(places or {})
+        catalog = CatalogService(self.db)
+        nodes: list[RouteNodeOut] = []
+        for node in self.repo.list_nodes(draft.id):
+            place = cache.get(node.place_id)
+            if place is None and node.place_id not in cache:
+                try:
+                    place = PlaceOut.model_validate(catalog.get_place(node.place_id))
+                except NotFound:
+                    place = None
+                cache[node.place_id] = place
+            if place is None:
+                continue
+            nodes.append(
+                RouteNodeOut(
+                    position=node.position,
+                    place=place,
+                    stay_minutes=node.stay_minutes,
+                    transport=node.transport,
+                    note=node.note,
+                    price_min=node.price_min,
+                    price_max=node.price_max,
+                )
+            )
+        base = RouteDraftOut.model_validate(draft)
+        return RouteDraftDetailOut(**base.model_dump(), nodes=nodes, cost=_cost_of(nodes))
+
     def _load_owned(self, *, draft_id: uuid.UUID, owner_id: uuid.UUID) -> RouteDraft:
         draft = self.repo.get(draft_id)
         if draft is None:
@@ -244,3 +409,17 @@ class RoutesService:
             # 不是 404：草稿 ID 可能是别人分享出来的，明确告诉他无权访问更安全。
             raise Forbidden("只能操作自己的草稿", code="DRAFT_FORBIDDEN")
         return draft
+
+
+def _cost_of(nodes: list[RouteNodeOut]) -> CostSummaryOut:
+    """按已知价格求和；缺任一端的价格算 unknown，而不是按 0 计入总额。
+
+    把缺失当 0 会让「预算 300」的路线看起来比实际便宜，所以单独计数，
+    前端可以提示「还有 N 站未填价格」。
+    """
+    unknown = sum(1 for node in nodes if node.price_min is None or node.price_max is None)
+    return CostSummaryOut(
+        min_total=sum(node.price_min for node in nodes if node.price_min is not None),
+        max_total=sum(node.price_max for node in nodes if node.price_max is not None),
+        unknown_count=unknown,
+    )
