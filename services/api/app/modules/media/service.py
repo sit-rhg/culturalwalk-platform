@@ -25,6 +25,7 @@ from app.core.config import settings
 from app.core.errors import Conflict, NotFound, ValidationFailed
 from app.modules.media.models import MediaAsset, MediaZone, ScanState
 from app.modules.media.repository import MediaRepository
+from app.modules.media.scan import ScanRejected, scan_image
 from app.modules.media.schemas import MediaAssetOut, MediaIntentIn, MediaIntentOut
 
 _ALLOWED_MIME = frozenset({"image/jpeg", "image/png", "image/webp"})
@@ -163,6 +164,59 @@ class MediaService:
         asset.zone = MediaZone.CLEAN
         asset.scan_state = ScanState.CLEAN
         self.db.flush()
+
+    # ---- 扫描（ME-02，由 worker 批量调用）----
+
+    def scan(self, asset_id: uuid.UUID) -> MediaAsset:
+        """解码重编码、清 EXIF、生成缩略图，过检才挪进 clean 区。
+
+        幂等：已 clean / 已 rejected 的资产直接返回，不重复写对象。
+        可预期的问题一律落到 REJECTED，不抛 500 —— 一张烂图不该让整批任务停摆。
+        """
+        asset = self.repo.get(asset_id)
+        if asset is None:
+            raise NotFound("媒体不存在", code="MEDIA_NOT_FOUND")
+        if asset.scan_state is ScanState.PENDING:
+            raise Conflict("文件尚未确认上传", code="MEDIA_NOT_UPLOADED")
+        if asset.scan_state in (ScanState.CLEAN, ScanState.REJECTED):
+            return asset
+
+        raw = self.storage.get(asset.object_key) or b""
+        try:
+            outcome = scan_image(raw, asset.mime)
+        except ScanRejected:
+            asset.scan_state = ScanState.REJECTED
+            # commit 而不是 flush：拒绝结论必须存活到调用方之外（异常/回滚都不该撤销它）
+            self.db.commit()
+            return asset
+
+        clean_key = f"clean/{asset.id}"
+        thumb_key = f"{clean_key}.thumb.webp"
+        self.storage.put(clean_key, outcome.data)
+        self.storage.put(thumb_key, outcome.thumbnail)
+        if asset.object_key != clean_key:
+            self.storage.delete(asset.object_key)
+
+        asset.object_key = clean_key
+        asset.zone = MediaZone.CLEAN
+        asset.scan_state = ScanState.CLEAN
+        asset.mime = outcome.mime
+        asset.size = len(outcome.data)
+        asset.checksum = hashlib.sha256(outcome.data).hexdigest()
+        asset.width = outcome.width
+        asset.height = outcome.height
+        self.db.flush()
+        return asset
+
+    def scan_pending(self, *, limit: int = 10) -> list[MediaAsset]:
+        results: list[MediaAsset] = []
+        for asset in self.repo.list_pending_scan(limit):
+            try:
+                results.append(self.scan(asset.id))
+            except Conflict:
+                # pending 资产理论上进不了这个列表，真撞上就跳过，别让 worker 崩
+                continue
+        return results
 
     # ---- 内部 ----
 

@@ -8,7 +8,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.modules.media.models import MediaAsset
+from app.modules.media.models import MediaAsset, MediaZone, ScanState
 
 
 class MediaRepository:
@@ -29,3 +29,16 @@ class MediaRepository:
             MediaAsset.idempotency_key == idempotency_key,
         )
         return self.db.scalars(stmt).first()
+
+    def list_pending_scan(self, limit: int) -> list[MediaAsset]:
+        """已经确认上传、等待扫描的资产（最老的先处理，避免饿死）。"""
+        stmt = (
+            select(MediaAsset)
+            .where(
+                MediaAsset.scan_state == ScanState.SCANNING,
+                MediaAsset.zone == MediaZone.QUARANTINE,
+            )
+            .order_by(MediaAsset.created_at, MediaAsset.id)
+            .limit(limit)
+        )
+        return list(self.db.scalars(stmt).all())
