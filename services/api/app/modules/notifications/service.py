@@ -10,12 +10,13 @@ from __future__ import annotations
 import base64
 import json
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.core.errors import AppError, ValidationFailed
+from app.core.errors import AppError, NotFound, ValidationFailed
+from app.modules.audit import service as audit
 from app.modules.notifications.models import Notification
 from app.modules.notifications.repository import NotificationsRepository
 
@@ -70,6 +71,38 @@ class NotificationsService:
         has_more = len(rows) > limit
         next_cursor = encode_cursor(items[-1].created_at, items[-1].id) if has_more else None
         return items, next_cursor
+
+    def mark_read(
+        self,
+        notification_id: uuid.UUID,
+        *,
+        user_id: uuid.UUID,
+        username: str,
+        request_id: str | None = None,
+    ) -> bool:
+        """标记本人通知已读。返回 True 表示本次真的改了状态，False 表示本来就已读。
+
+        幂等：重复标记不改 read_at、不重复写审计（否则审计里会出现"读了两次"的假记录）。
+        别人的通知与不存在的通知都报 404：不能通过 403/404 的差异探测通知是否存在。
+        """
+        row = self.repo.get(notification_id)
+        if row is None or row.user_id != user_id:
+            raise NotFound("通知不存在", code="NOTIFICATION_NOT_FOUND")
+        if row.read_at is not None:
+            return False
+
+        row.read_at = datetime.now(UTC)
+        audit.write(
+            self.db,
+            action="notification.read",
+            object_type="notification",
+            object_id=str(row.id),
+            actor_id=str(user_id),
+            actor_username=username,
+            after_hash=audit.AuditService.digest({"read_at": row.read_at.isoformat()}),
+            request_id=request_id,
+        )
+        return True
 
     def notify(
         self,

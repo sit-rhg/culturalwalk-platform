@@ -5,6 +5,7 @@ import { RouterLink, useRoute } from 'vue-router'
 import type { Schemas } from '@/api/types'
 import CommentThread from '@/modules/comment-thread/index.vue'
 import { ApiError, api } from '@/shared/api'
+import { pendingEndpoint } from '@/shared/capabilities'
 import {
   channelLabel,
   confidenceLabel,
@@ -13,6 +14,7 @@ import {
   transportLabel,
 } from '@/shared/format'
 import { isLoggedIn } from '@/shared/session'
+import DemoNotice from '@/shared/ui/DemoNotice.vue'
 import EmptyState from '@/shared/ui/EmptyState.vue'
 import Skeleton from '@/shared/ui/Skeleton.vue'
 
@@ -49,7 +51,8 @@ async function load(): Promise<void> {
   notFound.value = false
   favoriteHint.value = ''
   try {
-    detail.value = await api.get<RouteDetail>('/routes/' + encodeURIComponent(id))
+    // 路线详情/收藏接口还没实现：真接口模式下也走演示数据
+    detail.value = await api.mock.get<RouteDetail>('/routes/' + encodeURIComponent(id))
   } catch (error) {
     detail.value = null
     notFound.value = error instanceof ApiError && error.status === 404
@@ -76,7 +79,7 @@ async function toggleFavorite(): Promise<void> {
   favoriteBusy.value = true
   favoriteHint.value = ''
   try {
-    const res = await api.post<{ is_favorited: boolean }>(
+    const res = await api.mock.post<{ is_favorited: boolean }>(
       '/routes/' + encodeURIComponent(routeId.value) + '/favorite',
     )
     detail.value.is_favorited = res.is_favorited
@@ -90,6 +93,7 @@ async function toggleFavorite(): Promise<void> {
 
 <template>
   <div class="route-detail">
+    <DemoNotice :endpoint="pendingEndpoint('routeDetail')" />
     <div v-if="loading" class="stack">
       <div class="card"><Skeleton :lines="3" height="20px" /></div>
       <div class="card"><Skeleton :lines="5" /></div>

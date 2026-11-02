@@ -5,8 +5,18 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+def _required_text(value: str) -> str:
+    """必填文本字段：trim 后不能为空，否则等同于没填。"""
+    text = value.strip()
+    if not text:
+        raise ValueError("不能为空")
+    return text
 
 
 class SourceOut(BaseModel):
@@ -64,3 +74,84 @@ class PlaceDetailOut(PlaceOut):
         if value is not None and value.tzinfo is None:
             return value.replace(tzinfo=UTC)
         return value
+
+
+CultureTag = Annotated[str, Field(min_length=1, max_length=32)]
+
+
+class SourceIn(BaseModel):
+    """录入一条来源。
+
+    契约里 source/url 可空（口述来源没有网址）；但本接口要求补一条文化资料时
+    必须能溯源，所以这里是必填，url 还必须是 http(s)。
+    """
+
+    title: str = Field(min_length=1, max_length=255)
+    url: str = Field(min_length=1, max_length=2048)
+    publisher: str | None = Field(default=None, max_length=128)
+
+    @field_validator("title")
+    @classmethod
+    def _title_not_blank(cls, value: str) -> str:
+        return _required_text(value)
+
+    @field_validator("url")
+    @classmethod
+    def _http_url(cls, value: str) -> str:
+        """只认 http/https 且有主机名：ftp:、javascript:、裸域名都不算来源。"""
+        text = value.strip()
+        parsed = urlsplit(text)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("来源链接必须是 http(s) URL")
+        return text
+
+    @field_validator("publisher")
+    @classmethod
+    def _blank_to_none(cls, value: str | None) -> str | None:
+        return value.strip() or None if value is not None else None
+
+
+class PlaceCreateIn(BaseModel):
+    """POST /places 的请求体（契约 PlaceInput + 坐标系 crs）。"""
+
+    name: str = Field(min_length=1, max_length=128)
+    district: str | None = Field(default=None, max_length=64)
+    lat: float = Field(ge=-90, le=90, description="纬度 WGS84/CRS84，-90~90")
+    lon: float = Field(ge=-180, le=180, description="经度 WGS84/CRS84，-180~180")
+    summary: str | None = None
+    culture_tags: list[CultureTag] = Field(default_factory=list, max_length=20)
+    # 契约漏了坐标系；国内点位混用 WGS84 与 GCJ-02 会整体偏移，必须落库。
+    crs: Literal["OGC:CRS84", "WGS84", "GCJ-02"] = "OGC:CRS84"
+
+    @field_validator("name")
+    @classmethod
+    def _name_not_blank(cls, value: str) -> str:
+        return _required_text(value)
+
+    @field_validator("summary")
+    @classmethod
+    def _summary_blank_to_none(cls, value: str | None) -> str | None:
+        return value.strip() or None if value is not None else None
+
+    @field_validator("culture_tags")
+    @classmethod
+    def _clean_tags(cls, value: list[str]) -> list[str]:
+        """去空白、去重、保序：重复标签只会让过滤结果变脏。"""
+        return list(dict.fromkeys(tag.strip() for tag in value if tag.strip()))
+
+
+class PlaceFactCreateIn(BaseModel):
+    """POST /places/{place_id}/facts 的请求体。
+
+    source 在契约里可选，本接口收紧为必填：没有来源的文化资料就是未经核实的传言，
+    产品红线要求"补资料必须带出处"。
+    """
+
+    claim: str = Field(min_length=1, max_length=2000)
+    confidence: Literal["verified", "likely", "unverified"]
+    source: SourceIn
+
+    @field_validator("claim")
+    @classmethod
+    def _claim_not_blank(cls, value: str) -> str:
+        return _required_text(value)

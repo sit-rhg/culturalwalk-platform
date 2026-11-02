@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { api } from '@/shared/api'
+import { pendingEndpoint } from '@/shared/capabilities'
 import type { paths, Schemas } from '@/api/types'
+import DemoNotice from '@/shared/ui/DemoNotice.vue'
 import Skeleton from '@/shared/ui/Skeleton.vue'
 import EmptyState from '@/shared/ui/EmptyState.vue'
 import RouteCard from '@/modules/route-card/index.vue'
@@ -81,7 +83,8 @@ async function load(reset: boolean): Promise<void> {
   const query = buildRouteQuery(filters.value, cursor, PAGE_SIZE)
   const path = query ? '/routes?' + query : '/routes'
   try {
-    const page = await api.get<RoutePage>(path)
+    // 路线列表接口还没实现：真接口模式下也走演示数据，别让「发现」页 404
+    const page = await api.mock.get<RoutePage>(path)
     if (seq !== requestSeq) return
     const fresh = page.items ?? []
     items.value = reset ? fresh : [...items.value, ...fresh]
@@ -131,6 +134,7 @@ onBeforeUnmount(stopSearchTimer)
   <div>
     <h2>发现</h2>
     <p class="muted">按主题、时长与来源，找一条长沙的文化路线</p>
+    <DemoNotice :endpoint="pendingEndpoint('routeList')" />
 
     <section class="card filter-bar">
       <div class="field">

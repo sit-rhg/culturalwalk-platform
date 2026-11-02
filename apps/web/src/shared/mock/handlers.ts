@@ -61,6 +61,12 @@ function userFromToken(token: string | null): User | null {
   return USER_MAP[token.slice(TOKEN_PREFIX.length)] ?? null
 }
 
+/**
+ * 演示用户：api.mock 在真接口模式下没有 mock-token，退回审核编辑（权限最全），
+ * 否则「接口未接入」的页面只能看到 401，连演示都演示不了。
+ */
+const DEMO_USER = USERS.find((user) => user.role === 'admin') ?? USERS[0]
+
 function tokenPair(user: User): TokenPair {
   return {
     access_token: tokenFor(user.id),
@@ -512,9 +518,11 @@ export async function handleMock<T>(
   query: URLSearchParams,
   body: unknown,
   token: string | null,
+  /** demo：来自 api.mock，真接口模式下也允许用演示身份走这条假数据链 */
+  options: { demo?: boolean } = {},
 ): Promise<T> {
   await sleep(180 + Math.random() * 220)
-  const user = userFromToken(token)
+  const user = userFromToken(token) ?? (options.demo ? DEMO_USER : null)
   const ctx: Ctx = {
     query,
     body: (body && typeof body === 'object' ? body : {}) as Record<string, unknown>,

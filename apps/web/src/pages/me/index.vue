@@ -6,8 +6,10 @@ import { useRouter } from 'vue-router'
 import type { Schemas } from '@/api/types'
 
 import { ApiError, api } from '@/shared/api'
+import { pendingEndpoint, supports } from '@/shared/capabilities'
 import { relativeTime, shortDate } from '@/shared/format'
 import { isAdmin, isLoggedIn, logout } from '@/shared/session'
+import DemoNotice from '@/shared/ui/DemoNotice.vue'
 import EmptyState from '@/shared/ui/EmptyState.vue'
 import Skeleton from '@/shared/ui/Skeleton.vue'
 
@@ -39,6 +41,10 @@ const notifications = ref<Notification[]>([])
 const markingId = ref<string | null>(null)
 const loggingOut = ref(false)
 
+/** 个人主页聚合与标记已读还没有接口：mock 时照常演示，真接口模式下把对应交互藏起来 */
+const canLoadProfile = supports('profile')
+const canMarkRead = supports('notificationRead')
+
 const routeCards = computed(() =>
   (profile.value?.published_routes ?? []).map((route) => ({ route, meta: routeMeta(route) })),
 )
@@ -62,10 +68,11 @@ async function load(): Promise<void> {
     const user = await api.get<User>('/users/me')
     me.value = user
     const [loadedProfile, loadedNotifications] = await Promise.all([
-      api.get<UserProfile>(`/users/${user.id}/profile`),
+      // 聚合接口待 ID-04：真接口模式下先跳过，别让整个页面跟着 404
+      canLoadProfile ? api.get<UserProfile>(`/users/${user.id}/profile`) : Promise.resolve(null),
       api.get<{ items: Notification[] }>('/notifications?limit=20'),
     ])
-    profile.value = loadedProfile
+    if (loadedProfile) profile.value = loadedProfile
     notifications.value = loadedNotifications.items ?? []
     needsLogin.value = false
   } catch (error) {
@@ -78,7 +85,7 @@ async function load(): Promise<void> {
 }
 
 async function markRead(item: Notification): Promise<void> {
-  if (!item.id || markingId.value) return
+  if (!item.id || markingId.value || !canMarkRead) return
   markingId.value = item.id
   actionError.value = ''
   try {
@@ -132,7 +139,7 @@ onMounted(load)
         <p class="muted joined">加入于 {{ shortDate(me?.created_at) }}</p>
       </div>
 
-      <div class="card stats">
+      <div v-if="canLoadProfile" class="card stats">
         <div class="stat">
           <strong>{{ stats.published }}</strong>
           <span class="muted">已发布路线</span>
@@ -168,7 +175,7 @@ onMounted(load)
             理由：{{ payloadText(item.payload, 'reason') }}
           </p>
           <button
-            v-if="isUnread(item)"
+            v-if="isUnread(item) && canMarkRead"
             class="btn ghost small"
             type="button"
             :disabled="markingId === item.id"
@@ -176,13 +183,15 @@ onMounted(load)
           >
             {{ markingId === item.id ? '处理中…' : '标为已读' }}
           </button>
+          <span v-else-if="isUnread(item)" class="muted read-flag">标记已读接口未接入</span>
           <span v-else class="muted read-flag">已读</span>
         </li>
       </ul>
 
       <h3 class="section-title">已发布路线</h3>
+      <DemoNotice v-if="!canLoadProfile" :endpoint="pendingEndpoint('profile')" />
       <EmptyState
-        v-if="!routeCards.length"
+        v-else-if="!routeCards.length"
         :title="EMPTY_ROUTES"
         hint="写一条路线，把走过的巷子留给别人"
       >

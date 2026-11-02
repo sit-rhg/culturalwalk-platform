@@ -10,10 +10,14 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 type ApiModule = typeof import('@/shared/api')
+type StorageModule = typeof import('@/shared/storage')
 
 let api: ApiModule['api']
 let ApiError: ApiModule['ApiError']
 let setToken: ApiModule['setToken']
+let clearSessionTokens: ApiModule['clearSessionTokens']
+let readItem: StorageModule['readItem']
+let writeItem: StorageModule['writeItem']
 
 const fetchMock = vi.fn()
 
@@ -32,11 +36,16 @@ beforeAll(async () => {
   api = mod.api
   ApiError = mod.ApiError
   setToken = mod.setToken
+  clearSessionTokens = mod.clearSessionTokens
+  const storage = await import('@/shared/storage')
+  readItem = storage.readItem
+  writeItem = storage.writeItem
 })
 
 afterEach(() => {
   fetchMock.mockReset()
   setToken(null)
+  clearSessionTokens()
 })
 
 function installFetch(): void {
@@ -121,5 +130,50 @@ describe('共享请求层', () => {
     const error = await api.get('/routes').catch((e: unknown) => e)
     expect(error).toBeInstanceOf(ApiError)
     expect((error as InstanceType<ApiModule['ApiError']>).status).toBe(502)
+  })
+
+  it('401 时用 refresh_token 换新令牌，再拿新令牌重试原请求', async () => {
+    installFetch()
+    writeItem('cw_refresh_token', 'refresh-1')
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(401, { error: { code: 'UNAUTHORIZED', message: '过期' } }))
+      .mockResolvedValueOnce(
+        jsonResponse(200, { access_token: 'fresh-token', refresh_token: 'refresh-2' }),
+      )
+      .mockResolvedValueOnce(jsonResponse(200, { items: [] }))
+
+    await expect(api.get('/users/me')).resolves.toEqual({ items: [] })
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/v1/auth/refresh')
+    const retryHeaders = fetchMock.mock.calls[2][1].headers as Headers
+    expect(retryHeaders.get('Authorization')).toBe('Bearer fresh-token')
+    expect(readItem('cw_token')).toBe('fresh-token')
+    // 轮换后的新 refresh_token 要存下来，否则下次刷新还是旧令牌
+    expect(readItem('cw_refresh_token')).toBe('refresh-2')
+  })
+
+  it('刷新令牌也失效时清掉本地登录态，向上抛 401', async () => {
+    installFetch()
+    writeItem('cw_refresh_token', 'stale')
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(401, { error: { code: 'UNAUTHORIZED', message: '过期' } }))
+      .mockResolvedValueOnce(
+        jsonResponse(401, { error: { code: 'INVALID_REFRESH_TOKEN', message: '刷新失效' } }),
+      )
+
+    await expect(api.get('/users/me')).rejects.toMatchObject({ status: 401 })
+
+    // 不清理的话页面会一直带着废 token 反复 401
+    expect(readItem('cw_token')).toBeNull()
+    expect(readItem('cw_refresh_token')).toBeNull()
+  })
+
+  it('api.mock 在真接口模式下也走演示数据，并给出演示身份', async () => {
+    // 没有 token：真接口会 401，演示分支要退回审核编辑，页面才画得出来
+    const me = await api.mock.get<{ username: string; role: string }>('/users/me')
+
+    expect(me.role).toBe('admin')
+    expect(me.username).toBeTruthy()
   })
 })

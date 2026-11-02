@@ -34,7 +34,8 @@ async function load(): Promise<void> {
   loading.value = true
   loadError.value = ''
   try {
-    const res = await api.get<{ items?: Comment[] }>(
+    // 评论接口还没实现：真接口模式下也走演示数据
+    const res = await api.mock.get<{ items?: Comment[] }>(
       '/routes/' + encodeURIComponent(props.routeId) + '/comments',
     )
     items.value = sortComments(res.items ?? [])
@@ -58,7 +59,7 @@ async function submit(): Promise<void> {
   }
   posting.value = true
   try {
-    await api.post<Comment>('/routes/' + encodeURIComponent(props.routeId) + '/comments', {
+    await api.mock.post<Comment>('/routes/' + encodeURIComponent(props.routeId) + '/comments', {
       body: text,
     })
     body.value = ''
@@ -74,7 +75,7 @@ async function pin(id: string): Promise<void> {
   pinningId.value = id
   formError.value = ''
   try {
-    await api.post<Comment>('/comments/' + encodeURIComponent(id) + '/pin')
+    await api.mock.post<Comment>('/comments/' + encodeURIComponent(id) + '/pin')
     await load()
   } catch (error) {
     formError.value = error instanceof ApiError ? error.message : '置顶失败'
