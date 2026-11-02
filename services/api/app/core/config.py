@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     s3_access_key: str = "minioadmin"
     s3_secret_key: str = "minioadmin"
     media_max_bytes: int = 10 * 1024 * 1024
+    # local = 磁盘 + HMAC 签名（开发/CI）；s3 = MinIO（SigV4 未接入前 fail-closed）
+    media_storage: str = "local"
+    media_storage_root: str = "var/media"
+    media_storage_secret: str = "dev-only-media-secret"
+    media_public_base_url: str = "http://localhost:8000"
+    media_upload_ttl_seconds: int = 600
 
     # 外部 Provider（留空则走 fake 实现，便于无网演示）
     map_provider: str = "fake"  # fake | amap | tencent
