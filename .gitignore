@@ -50,3 +50,14 @@ tmp/
 pip-*/
 pytest-cache-files-*/
 *.whl
+pip-build-tracker-*/
+pip-ephem-wheel-cache-*/
+pip-install-*/
+
+# pip 本地构建残留（pip install -e . 会生成，别提交）
+*.egg-info/
+pip-build-env-*/
+pip-metadata-*/
+pip-modern-metadata-*/
+pip-unpack-*/
+pip-*/

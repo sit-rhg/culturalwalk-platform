@@ -1,0 +1,542 @@
+{
+  "dataset": "changsha-places",
+  "version": 1,
+  "note": "CA-02 长沙种子数据。坐标采用 WGS84(CRS84)，为点位大致中心，用于地图打点而非测绘。来源优先官方站点与地方志；标 verified 的必须带 URL，其余用 likely/unverified 表达把握程度，前端据此决定是否标注「待核实」。",
+  "places": [
+    {
+      "slug": "yuelu-academy",
+      "name": "岳麓书院",
+      "alias": "岳麓书院（湖南大学）",
+      "district": "岳麓区",
+      "lat": 28.1836,
+      "lon": 112.9345,
+      "summary": "始建于北宋的千年学府，讲堂、御书楼、半学斋沿着中轴排开，今天仍是湖南大学的一部分，学生偶尔在廊下自习。",
+      "culture_tags": ["历史", "建筑", "教育"],
+      "facts": [
+        {
+          "claim": "岳麓书院创建于北宋开宝九年（976年），是中国古代四大书院之一。",
+          "confidence": "verified",
+          "source": {
+            "title": "岳麓书院：百年实事求是，千载弦歌不绝",
+            "url": "http://ccpd.china.com.cn/2023-10/08/content_42543919.html",
+            "publisher": "中国网"
+          }
+        },
+        {
+          "claim": "书院门联「惟楚有材，于斯为盛」为清嘉庆年间山长袁名曜所撰。",
+          "confidence": "likely",
+          "source": { "title": "《长沙市志》", "publisher": "湖南人民出版社" }
+        }
+      ]
+    },
+    {
+      "slug": "aiwan-pavilion",
+      "name": "爱晚亭",
+      "district": "岳麓区",
+      "lat": 28.1872,
+      "lon": 112.9384,
+      "summary": "岳麓山清风峡口的重檐亭子，原名红叶亭，因杜牧「停车坐爱枫林晚」改名，深秋满谷红枫。",
+      "culture_tags": ["建筑", "文学", "自然"],
+      "facts": [
+        {
+          "claim": "爱晚亭始建于清乾隆五十七年（1792年），由岳麓书院山长罗典主持修建。",
+          "confidence": "likely",
+          "source": { "title": "《长沙市志》", "publisher": "湖南人民出版社" }
+        }
+      ]
+    },
+    {
+      "slug": "lushan-temple",
+      "name": "麓山寺",
+      "district": "岳麓区",
+      "lat": 28.185,
+      "lon": 112.9362,
+      "summary": "西晋时创建的古寺，山门、大雄宝殿沿山势层叠而上，是湖南最早的佛教寺院之一。",
+      "culture_tags": ["宗教", "历史"],
+      "facts": [
+        {
+          "claim": "麓山寺始建于西晋泰始四年（268年）。",
+          "confidence": "likely",
+          "source": { "title": "《湖南通志》", "publisher": "岳麓书社" }
+        }
+      ]
+    },
+    {
+      "slug": "yunlu-palace",
+      "name": "云麓宫",
+      "district": "岳麓区",
+      "lat": 28.1885,
+      "lon": 112.94,
+      "summary": "岳麓山顶的道观，明代始建，宫前石阶一路下到湘江边，是长沙少见的道教活动场所。",
+      "culture_tags": ["宗教", "建筑"],
+      "facts": [
+        {
+          "claim": "云麓宫始建于明成化十四年（1478年）。",
+          "confidence": "likely",
+          "source": { "title": "《长沙市志》", "publisher": "湖南人民出版社" }
+        }
+      ]
+    },
+    {
+      "slug": "orange-isle",
+      "name": "橘子洲",
+      "alias": "橘子洲头",
+      "district": "岳麓区",
+      "lat": 28.193,
+      "lon": 112.962,
+      "summary": "湘江江心的长洲，洲头立着青年毛泽东艺术雕像，春天放风筝、秋天看江枫，是长沙人散步的老地方。",
+      "culture_tags": ["自然", "红色", "文学"],
+      "facts": [
+        {
+          "claim": "毛泽东1925年秋重游长沙，作《沁园春·长沙》，「独立寒秋，湘江北去，橘子洲头」即写此地。",
+          "confidence": "verified",
+          "source": {
+            "title": "橘子洲风景区（含青年毛泽东艺术雕像）",
+            "url": "https://searchs.hunan.gov.cn/hnszf/jxxx/hslv/c101474/202108/t20210827_20403826.html",
+            "publisher": "湖南省人民政府网"
+          }
+        }
+      ]
+    },
+    {
+      "slug": "hunan-university",
+      "name": "湖南大学",
+      "district": "岳麓区",
+      "lat": 28.1805,
+      "lon": 112.9425,
+      "summary": "没有围墙的大学，教学楼散落在岳麓山下，老图书馆和东方红广场是几代人的合影背景。",
+      "culture_tags": ["教育", "建筑"],
+      "facts": [
+        {
+          "claim": "湖南大学1926年定名，校址与岳麓书院一脉相承。",
+          "confidence": "likely",
+          "source": { "title": "《湖南大学校史》", "publisher": "湖南大学出版社" }
+        }
+      ]
+    },
+    {
+      "slug": "tianxin-pavilion",
+      "name": "天心阁",
+      "district": "天心区",
+      "lat": 28.1885,
+      "lon": 112.979,
+      "summary": "建在长沙古城墙仅存的一段之上，阁高三层，登楼能望见整片老城区的屋顶。",
+      "culture_tags": ["历史", "建筑"],
+      "facts": [
+        {
+          "claim": "天心阁古城墙为全国重点文物保护单位。",
+          "confidence": "verified",
+          "source": {
+            "title": "「天心阁古城墙」晋升为全国重点文物保护单位",
+            "url": "http://hntxg.cn/article/119.html",
+            "publisher": "长沙市天心阁管理处"
+          }
+        },
+        {
+          "claim": "天心阁之名始于明末，阁与城墙同为长沙城防体系的一部分。",
+          "confidence": "likely",
+          "source": { "title": "《长沙府志》", "publisher": "清乾隆年间刻本" }
+        }
+      ]
+    },
+    {
+      "slug": "taiping-street",
+      "name": "太平老街",
+      "district": "天心区",
+      "lat": 28.194,
+      "lon": 112.973,
+      "summary": "一条保留了清代街巷肌理的麻石街，贾谊故居、乾益升粮栈都在这条街上，入夜烟火气最重。",
+      "culture_tags": ["历史", "民俗", "美食"],
+      "facts": [
+        {
+          "claim": "太平老街保留了清代至民国时期的街巷格局与麻石路面。",
+          "confidence": "verified",
+          "source": {
+            "title": "太平老街正青春",
+            "url": "https://www.qstheory.cn/laigao/ycjx/2023-04/13/c_1129519605.htm",
+            "publisher": "求是网"
+          }
+        }
+      ]
+    },
+    {
+      "slug": "jia-yi-residence",
+      "name": "贾谊故居",
+      "district": "天心区",
+      "lat": 28.1938,
+      "lon": 112.9728,
+      "summary": "西汉贾谊任长沙王太傅时的居所，院里有口古井，历代重修，如今是太平街上的一个小院。",
+      "culture_tags": ["历史", "文学", "建筑"],
+      "facts": [
+        {
+          "claim": "贾谊于汉文帝年间被贬为长沙王太傅，居所即在此地，后世称「贾太傅祠」。",
+          "confidence": "verified",
+          "source": {
+            "title": "长沙市贾谊故居管理处",
+            "url": "http://wlgd.changsha.gov.cn/zwgk/fdzdgknr/zzjg/jsdw/202001/t20200106_5982519.html",
+            "publisher": "长沙市文化旅游广电局"
+          }
+        }
+      ]
+    },
+    {
+      "slug": "huogong-palace",
+      "name": "火宫殿",
+      "district": "天心区",
+      "lat": 28.1908,
+      "lon": 112.9772,
+      "summary": "坡子街上的火神庙，庙会与小吃摊连成一片，臭豆腐、糖油粑粑是招牌。",
+      "culture_tags": ["美食", "民俗", "非遗"],
+      "facts": [
+        {
+          "claim": "火宫殿臭豆腐制作技艺列入国家级非物质文化遗产代表性项目名录。",
+          "confidence": "likely",
+          "source": { "title": "《长沙市非物质文化遗产名录》", "publisher": "长沙市文化旅游广电局" }
+        }
+      ]
+    },
+    {
+      "slug": "jiandu-museum",
+      "name": "长沙简牍博物馆",
+      "district": "天心区",
+      "lat": 28.1868,
+      "lon": 112.9812,
+      "summary": "国内首座简牍专题博物馆，走马楼出土的十万余枚三国吴简是镇馆之宝。",
+      "culture_tags": ["历史", "建筑"],
+      "facts": [
+        {
+          "claim": "1996年长沙走马楼J22井出土三国吴简十万余枚。",
+          "confidence": "likely",
+          "source": { "title": "《长沙走马楼三国吴简》", "publisher": "文物出版社" }
+        }
+      ]
+    },
+    {
+      "slug": "first-normal",
+      "name": "湖南第一师范",
+      "alias": "湖南省立第一师范学校旧址",
+      "district": "天心区",
+      "lat": 28.18,
+      "lon": 112.9775,
+      "summary": "城南书院校址上的师范学校，毛泽东在此求学八年，教室和第八班寝室还按原样陈列。",
+      "culture_tags": ["红色", "教育", "建筑"],
+      "facts": [
+        {
+          "claim": "毛泽东1913年至1918年在湖南省立第一师范学校求学。",
+          "confidence": "verified",
+          "source": {
+            "title": "毛泽东与第一师范纪念馆现场教学简介",
+            "url": "https://www.12371.cn/2021/08/23/ARTI1629683215772380.shtml",
+            "publisher": "共产党员网"
+          }
+        }
+      ]
+    },
+    {
+      "slug": "baisha-well",
+      "name": "白沙井",
+      "district": "天心区",
+      "lat": 28.1832,
+      "lon": 112.983,
+      "summary": "白沙路边的四眼古井，井水常年不涸，清晨还有居民拎着桶来打水。",
+      "culture_tags": ["民俗", "自然"],
+      "facts": [
+        {
+          "claim": "白沙井为长沙名泉，明清方志中已有记载。",
+          "confidence": "likely",
+          "source": { "title": "《长沙府志》", "publisher": "清乾隆年间刻本" }
+        }
+      ]
+    },
+    {
+      "slug": "dufu-pavilion",
+      "name": "杜甫江阁",
+      "district": "天心区",
+      "lat": 28.1872,
+      "lon": 112.9705,
+      "summary": "湘江风光带上的仿唐楼阁，纪念杜甫晚年寓居长沙，夜里亮灯后是江边最显眼的轮廓。",
+      "culture_tags": ["文学", "建筑"],
+      "facts": [
+        {
+          "claim": "杜甫晚年流寓潭州（今长沙），留下《江南逢李龟年》等诗作。",
+          "confidence": "likely",
+          "source": { "title": "《杜甫年谱》", "publisher": "中华书局" }
+        }
+      ]
+    },
+    {
+      "slug": "kaifu-temple",
+      "name": "开福寺",
+      "district": "开福区",
+      "lat": 28.2205,
+      "lon": 112.9795,
+      "summary": "城北的千年古刹，山门、大雄宝殿、毗卢殿依次排开，香火与素面馆挨在一起。",
+      "culture_tags": ["宗教", "历史"],
+      "facts": [
+        {
+          "claim": "开福寺始建于五代后唐天成二年（927年）。",
+          "confidence": "likely",
+          "source": {
+            "title": "长沙开福寺",
+            "url": "http://www.fjhnw.com/show/?85-85-88.html",
+            "publisher": "湖南佛教网"
+          }
+        }
+      ]
+    },
+    {
+      "slug": "hunan-museum",
+      "name": "湖南省博物馆",
+      "district": "开福区",
+      "lat": 28.2135,
+      "lon": 112.9935,
+      "summary": "马王堆汉墓文物的大本营，素纱襌衣、T形帛画都在这里，周一闭馆。",
+      "culture_tags": ["历史", "建筑"],
+      "facts": [
+        {
+          "claim": "馆藏以马王堆汉墓出土文物最具代表性，素纱襌衣为其一。",
+          "confidence": "likely",
+          "source": { "title": "《长沙马王堆一号汉墓发掘报告》", "publisher": "文物出版社" }
+        }
+      ]
+    },
+    {
+      "slug": "chaozong-street",
+      "name": "潮宗街",
+      "district": "开福区",
+      "lat": 28.2075,
+      "lon": 112.9745,
+      "summary": "长沙保存较完整的历史街区之一，麻石路、老教堂、时务学堂旧址挤在一条巷子里。",
+      "culture_tags": ["历史", "民俗", "建筑"],
+      "facts": [
+        {
+          "claim": "潮宗街为长沙市历史文化街区，保留麻石路面与清末民初建筑。",
+          "confidence": "likely",
+          "source": { "title": "《长沙市历史文化名城保护规划》", "publisher": "长沙市自然资源和规划局" }
+        }
+      ]
+    },
+    {
+      "slug": "martyrs-park",
+      "name": "湖南烈士公园",
+      "district": "开福区",
+      "lat": 28.213,
+      "lon": 112.9905,
+      "summary": "1953年建的纪念性公园，烈士塔立在松柏之间，年嘉湖边一到周末全是划船的人。",
+      "culture_tags": ["红色", "自然"],
+      "facts": [
+        {
+          "claim": "湖南烈士公园1953年建成开放，以纪念湖南革命烈士。",
+          "confidence": "likely",
+          "source": { "title": "《长沙市志》", "publisher": "湖南人民出版社" }
+        }
+      ]
+    },
+    {
+      "slug": "qingshuitang",
+      "name": "清水塘毛泽东杨开慧故居",
+      "district": "开福区",
+      "lat": 28.205,
+      "lon": 112.986,
+      "summary": "1921年至1923年毛泽东与杨开慧在长沙的住所，也是中共湘区委员会旧址，青砖小院很安静。",
+      "culture_tags": ["红色", "历史"],
+      "facts": [
+        {
+          "claim": "清水塘22号为中共湘区委员会旧址，毛泽东、杨开慧曾在此居住。",
+          "confidence": "likely",
+          "source": { "title": "《长沙市志》", "publisher": "湖南人民出版社" }
+        }
+      ]
+    },
+    {
+      "slug": "chuanshan-society",
+      "name": "船山学社旧址",
+      "district": "开福区",
+      "lat": 28.2035,
+      "lon": 112.9795,
+      "summary": "中山路上的青砖院落，原为王船山祠，1921年毛泽东在此创办湖南自修大学。",
+      "culture_tags": ["红色", "教育", "历史"],
+      "facts": [
+        {
+          "claim": "1921年毛泽东、何叔衡在船山学社创办湖南自修大学。",
+          "confidence": "likely",
+          "source": { "title": "《长沙市志》", "publisher": "湖南人民出版社" }
+        }
+      ]
+    },
+    {
+      "slug": "hualongchi",
+      "name": "化龙池",
+      "district": "芙蓉区",
+      "lat": 28.1902,
+      "lon": 112.9805,
+      "summary": "一条窄巷，巷口有口古井，传说是善玉夫妇化龙处，如今酒吧与老住户混住。",
+      "culture_tags": ["民俗", "历史"],
+      "facts": [
+        {
+          "claim": "化龙池巷名源于化龙传说，明清时期属善化县。",
+          "confidence": "likely",
+          "source": { "title": "《长沙府志》", "publisher": "清乾隆年间刻本" }
+        }
+      ]
+    },
+    {
+      "slug": "dingwangtai",
+      "name": "定王台",
+      "district": "芙蓉区",
+      "lat": 28.191,
+      "lon": 112.9855,
+      "summary": "西汉长沙定王刘发筑台望母处，台已不存，地名留了下来，如今是书市所在。",
+      "culture_tags": ["历史", "建筑"],
+      "facts": [
+        {
+          "claim": "定王台为西汉长沙定王刘发所筑，用以遥望长安母亲。",
+          "confidence": "likely",
+          "source": { "title": "《长沙府志》", "publisher": "清乾隆年间刻本" }
+        }
+      ]
+    },
+    {
+      "slug": "tongguan-kiln",
+      "name": "铜官窑遗址",
+      "alias": "长沙铜官窑国家考古遗址公园",
+      "district": "望城区",
+      "lat": 28.43,
+      "lon": 112.78,
+      "summary": "唐代长沙窑的核心窑区，首创釉下彩，遗址公园里还能看到龙窑残迹。",
+      "culture_tags": ["工业", "历史", "非遗"],
+      "facts": [
+        {
+          "claim": "长沙铜官窑遗址为全国重点文物保护单位，核心区建有国家考古遗址公园。",
+          "confidence": "verified",
+          "source": {
+            "title": "长沙铜官窑国家考古遗址公园开园",
+            "url": "http://www.ncha.gov.cn/art/2012/6/8/art_722_107241.html",
+            "publisher": "国家文物局"
+          }
+        },
+        {
+          "claim": "长沙窑在唐代首创釉下彩绘瓷，产品经湘江外销。",
+          "confidence": "likely",
+          "source": { "title": "《长沙窑》", "publisher": "湖南美术出版社" }
+        }
+      ]
+    },
+    {
+      "slug": "jinggang-town",
+      "name": "靖港古镇",
+      "district": "望城区",
+      "lat": 28.46,
+      "lon": 112.79,
+      "summary": "沩水入湘处的老码头镇，青石板街、宏泰坊、八元堂都还在，宁乡会馆的门楼很气派。",
+      "culture_tags": ["历史", "民俗", "建筑"],
+      "facts": [
+        {
+          "claim": "靖港为湘江下游重要商埠，清末民初商贸繁盛。",
+          "confidence": "verified",
+          "source": {
+            "title": "长沙靖港古镇景区简介",
+            "url": "https://www.csjinggang.com/index/introduction/info.html",
+            "publisher": "靖港古镇景区官方网站"
+          }
+        }
+      ]
+    },
+    {
+      "slug": "huangxing-residence",
+      "name": "黄兴故居",
+      "district": "长沙县",
+      "lat": 28.13,
+      "lon": 113.08,
+      "summary": "长沙县黄兴镇的清末民居，前后两进，黄兴在此出生并度过少年时代。",
+      "culture_tags": ["红色", "历史", "建筑"],
+      "facts": [
+        {
+          "claim": "黄兴1874年生于善化县龙喜乡，即今长沙县黄兴镇。",
+          "confidence": "likely",
+          "source": { "title": "《黄兴年谱》", "publisher": "中华书局" }
+        }
+      ]
+    },
+    {
+      "slug": "tianhan-residence",
+      "name": "田汉故居",
+      "district": "长沙县",
+      "lat": 28.25,
+      "lon": 113.13,
+      "summary": "长沙县果园镇的农舍，田汉在此出生，《义勇军进行曲》的词作者从这里走出去。",
+      "culture_tags": ["红色", "文学", "建筑"],
+      "facts": [
+        {
+          "claim": "田汉1898年生于长沙县，为《义勇军进行曲》词作者。",
+          "confidence": "likely",
+          "source": { "title": "《田汉年谱》", "publisher": "中国戏剧出版社" }
+        }
+      ]
+    },
+    {
+      "slug": "wenjiashi",
+      "name": "秋收起义文家市会师旧址",
+      "district": "浏阳市",
+      "lat": 28.03,
+      "lon": 113.95,
+      "summary": "浏阳文家市的里仁学校，1927年秋收起义部队在此会师并转向井冈山。",
+      "culture_tags": ["红色", "历史", "建筑"],
+      "facts": [
+        {
+          "claim": "1927年9月，秋收起义部队在浏阳文家市会师，随后向井冈山进军。",
+          "confidence": "likely",
+          "source": { "title": "《中国共产党历史》第一卷", "publisher": "中共党史出版社" }
+        }
+      ]
+    },
+    {
+      "slug": "tan-sitong-residence",
+      "name": "谭嗣同故居",
+      "district": "浏阳市",
+      "lat": 28.14,
+      "lon": 113.63,
+      "summary": "浏阳城里的清代宅院，谭嗣同少年时在此读书，「戊戌六君子」之一的故居保存完好。",
+      "culture_tags": ["历史", "建筑", "红色"],
+      "facts": [
+        {
+          "claim": "谭嗣同故居为清代建筑，谭嗣同少年时期在此生活读书。",
+          "confidence": "likely",
+          "source": { "title": "《浏阳县志》", "publisher": "湖南人民出版社" }
+        }
+      ]
+    },
+    {
+      "slug": "liushaoqi-residence",
+      "name": "刘少奇故居",
+      "district": "宁乡市",
+      "lat": 28.01,
+      "lon": 112.3,
+      "summary": "宁乡花明楼的农舍，刘少奇在此出生，故居与纪念馆连成一片。",
+      "culture_tags": ["红色", "历史", "建筑"],
+      "facts": [
+        {
+          "claim": "刘少奇1898年生于宁乡县花明楼炭子冲。",
+          "confidence": "likely",
+          "source": { "title": "《刘少奇年谱》", "publisher": "中央文献出版社" }
+        }
+      ]
+    },
+    {
+      "slug": "tanheli-site",
+      "name": "炭河里遗址",
+      "district": "宁乡市",
+      "lat": 28.13,
+      "lon": 112.15,
+      "summary": "商周时期的地方青铜文化中心，宁乡一带出土的四羊方尊等青铜器就出自这个文化圈。",
+      "culture_tags": ["历史", "工业"],
+      "facts": [
+        {
+          "claim": "炭河里遗址为商周时期青铜文化遗存，宁乡黄材一带曾出土四羊方尊、人面纹方鼎等青铜器。",
+          "confidence": "likely",
+          "source": { "title": "《宁乡炭河里遗址》", "publisher": "文物出版社" }
+        }
+      ]
+    }
+  ]
+}
