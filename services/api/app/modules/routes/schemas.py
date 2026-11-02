@@ -131,6 +131,9 @@ class RouteNodeOut(BaseModel):
     note: str | None = None
     price_min: int | None = None
     price_max: int | None = None
+    # 契约里 RouteNodeInput 有这组 id，但没有 RouteNode 输出 schema；
+    # 详情回显同一份 id，前端才能显示"本节点已配图 N 张"（RT-05）。
+    media_asset_ids: list[uuid.UUID] = Field(default_factory=list)
 
 
 class CostSummaryOut(BaseModel):

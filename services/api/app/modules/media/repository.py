@@ -30,6 +30,13 @@ class MediaRepository:
         )
         return self.db.scalars(stmt).first()
 
+    def get_many(self, asset_ids: list[uuid.UUID]) -> list[MediaAsset]:
+        """批量取资产：routes 一次 PUT 会带多个 id，逐个 get 会打 N 次库。"""
+        if not asset_ids:
+            return []
+        stmt = select(MediaAsset).where(MediaAsset.id.in_(asset_ids))
+        return list(self.db.scalars(stmt).all())
+
     def list_pending_scan(self, limit: int) -> list[MediaAsset]:
         """已经确认上传、等待扫描的资产（最老的先处理，避免饿死）。"""
         stmt = (

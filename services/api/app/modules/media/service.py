@@ -259,3 +259,26 @@ class MediaService:
             width=asset.width,
             height=asset.height,
         )
+
+
+def require_clean_assets(
+    db: Session, *, owner_id: uuid.UUID, asset_ids: list[uuid.UUID], field: str
+) -> None:
+    """校验一组媒体 id 都能被当前用户引用：存在、属于本人、扫描通过（RT-05）。
+
+    这是本模块对外的只读契约，routes 不直接碰 media 的 repository——
+    "什么算可用资产"的口径只在这里定义，另处复制一份迟早漂移。
+    一次性把错误都收进 details：前端可以逐项高亮，而不是改一个报一个。
+    """
+    if not asset_ids:
+        return
+    found = {asset.id: asset for asset in MediaRepository(db).get_many(asset_ids)}
+    details: list[dict[str, str]] = []
+    for asset_id in asset_ids:
+        asset = found.get(asset_id)
+        if asset is None or asset.owner_id != owner_id:
+            details.append({"field": field, "reason": "媒体不存在或无权使用"})
+        elif asset.scan_state is not ScanState.CLEAN or asset.zone is not MediaZone.CLEAN:
+            details.append({"field": field, "reason": "媒体尚未通过扫描"})
+    if details:
+        raise ValidationFailed("引用的媒体不可用", details=details)

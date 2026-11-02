@@ -20,6 +20,7 @@ from app.core.errors import Conflict, Forbidden, NotFound, PreconditionFailed, V
 from app.core.pagination import decode_cursor, encode_cursor
 from app.modules.catalog.schemas import PlaceOut
 from app.modules.catalog.service import CatalogService
+from app.modules.media.service import require_clean_assets
 from app.modules.routes.models import DraftState, RouteDraft, RouteNode, RouteVersion
 from app.modules.routes.repository import RoutesRepository
 from app.modules.routes.schemas import (
@@ -274,6 +275,14 @@ class RoutesService:
         # 先把地点全部解析一遍再动库：有一个不存在就整单 422，
         # 不能让前几个节点落库、后一个失败，留下半份路线。
         places = self._resolve_places(payload.nodes)
+        # 媒体同理整单校验：节点是整表替换，半份带图的草稿比没有更难收拾。
+        for index, node in enumerate(payload.nodes):
+            require_clean_assets(
+                self.db,
+                owner_id=owner_id,
+                asset_ids=node.media_asset_ids,
+                field=f"nodes.{index}.media_asset_ids",
+            )
         updated = self.repo.patch_cas(
             draft_id=draft_id,
             expected_version=if_match,
@@ -299,6 +308,8 @@ class RoutesService:
                     note=node.note,
                     price_min=node.price_min,
                     price_max=node.price_max,
+                    # 存字符串：JSON 列不保证能序列化 UUID，SQLite 会直接报错。
+                    media_asset_ids=[str(asset_id) for asset_id in node.media_asset_ids],
                 )
                 for position, node in enumerate(payload.nodes, start=1)
             ],
@@ -419,6 +430,8 @@ class RoutesService:
                     "note": node.note,
                     "price_min": node.price_min,
                     "price_max": node.price_max,
+                    # 配图也算内容：同一份路线换图后冻结，hash 必须不同。
+                    "media_asset_ids": list(node.media_asset_ids),
                 }
                 for node in self.repo.list_nodes(draft.id)
             ],
@@ -475,6 +488,7 @@ class RoutesService:
                     note=node.note,
                     price_min=node.price_min,
                     price_max=node.price_max,
+                    media_asset_ids=[uuid.UUID(raw) for raw in node.media_asset_ids],
                 )
             )
         base = RouteDraftOut.model_validate(draft)
