@@ -92,9 +92,17 @@ class RoutesService:
         if existing is not None:
             return self._replay_create(existing, request_hash)
 
+        title = payload.title.strip()
+        # 和 PATCH 同一条规则：长度校验看的是原串，全空白能过 min_length=1，
+        # 落库前必须再判一次，否则会建出一份空标题草稿。
+        if not title:
+            raise ValidationFailed(
+                "标题不能为空", details=[{"field": "title", "reason": "不能全为空白"}]
+            )
+
         draft = RouteDraft(
             owner_id=owner_id,
-            title=payload.title.strip(),
+            title=title,
             summary=payload.summary,
             theme_tags=_clean_tags(payload.theme_tags),
             duration_minutes=payload.duration_minutes,

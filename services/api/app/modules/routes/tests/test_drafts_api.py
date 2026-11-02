@@ -126,6 +126,17 @@ def test_create_title_too_long_is_422(client: TestClient, user_headers: dict) ->
     assert response.status_code == 422
 
 
+def test_create_blank_title_is_422(client: TestClient, user_headers: dict) -> None:
+    """PATCH 已经拒绝全空白标题，POST 不能漏：否则能建出一份空标题草稿。"""
+    response = client.post(
+        API,
+        json=_payload(title="   "),
+        headers={**user_headers, "Idempotency-Key": _key()},
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["details"][0]["field"] == "title"
+
+
 # ===== 列表 =====
 def test_list_only_returns_own_drafts(
     client: TestClient, user_headers: dict, admin_headers: dict
