@@ -450,14 +450,25 @@ def test_api_conflicts_when_still_generating(
     assert response.json()["error"]["code"] == "PLAN_NOT_READY"
 
 
-# ---------------------------------------------------------------- 跨模块未就绪
+# ---------------------------------------------------------------- 跨模块没就绪
 
 
-def test_real_port_fails_loudly_when_routes_module_is_a_stub(db: Session) -> None:
-    """本分支上 routes 还没有 create（RT-01 只在 main）：要报 409 而不是 500。
+class _StubRoutesService:
+    """模拟"routes 还没提供该能力"的 service：只有 db，没有 create / replace_nodes。"""
 
-    合进 main 后这段自然走真实实现，不需要改代码——所以用 getattr 探测。
+    def __init__(self, db: object) -> None:
+        self.db = db
+
+
+def test_port_reports_conflict_when_routes_service_has_no_create(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """routes 侧没提供 create 时，必须报 409 ROUTES_UNAVAILABLE，而不是 500。
+
+    用桩替换 service 来复现"能力缺失"，不依赖当前分支上 routes 实现了多少。
     """
+    monkeypatch.setattr(RoutesDraftPort, "_service", lambda self: _StubRoutesService(self.db))
+
     with pytest.raises(Conflict) as excinfo:
         RoutesDraftPort(db).create(
             owner_id=uuid.uuid4(),
@@ -473,11 +484,44 @@ def test_real_port_fails_loudly_when_routes_module_is_a_stub(db: Session) -> Non
     assert excinfo.value.code == "ROUTES_UNAVAILABLE"
 
 
-def test_real_port_skips_nodes_when_routes_cannot_write_them(db: Session) -> None:
-    """RT-02 还没提供 replace_nodes：静默跳过，不能因此让整个转草稿失败。"""
+def test_port_silently_skips_nodes_when_routes_cannot_write_them(
+    db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """routes 还没提供 replace_nodes 时静默跳过，不能让整次转草稿失败。"""
+    monkeypatch.setattr(RoutesDraftPort, "_service", lambda self: _StubRoutesService(self.db))
+
     RoutesDraftPort(db).replace_nodes(
         draft_id=uuid.uuid4(),
         owner_id=uuid.uuid4(),
         nodes=(DraftNode(place_id=uuid.uuid4(), stay_minutes=30),),
         idempotency_key="plan:x:nodes",
     )
+
+
+def test_real_port_creates_a_real_draft(db: Session) -> None:
+    """routes 就绪后，真实 port 必须真的建出一份草稿（回归：RT-01 合入后链路仍然是通的）。"""
+    from app.modules.identity.models import ROLE_USER, STATUS_ACTIVE, User
+    from app.modules.identity.service import hash_password
+
+    user = User(
+        id=uuid.uuid4(),
+        username="port-user",
+        password_hash=hash_password("password123"),
+        role=ROLE_USER,
+        status=STATUS_ACTIVE,
+    )
+    db.add(user)
+    db.commit()
+
+    draft_id = RoutesDraftPort(db).create(
+        owner_id=user.id,
+        spec=DraftSpec(
+            title="长沙 1 天文化路线",
+            summary="测试",
+            theme_tags=(),
+            duration_minutes=0,
+            nodes=(),
+        ),
+        idempotency_key="plan:x:real",
+    )
+    assert isinstance(draft_id, uuid.UUID)
