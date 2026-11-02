@@ -38,13 +38,21 @@ from app.modules.planner.service import PlannerService
 
 
 class FakeSession:
-    """只记录 add()，不碰真实数据库。"""
+    """只记录 add()/execute()，不碰真实数据库。"""
 
     def __init__(self) -> None:
         self.added: list[object] = []
+        self.statements: list[object] = []
 
     def add(self, obj: object) -> None:
         self.added.append(obj)
+
+    def execute(self, statement: object) -> None:
+        """PL-06 起成功路径会先清理旧日程，这一步走 execute()。"""
+        self.statements.append(statement)
+
+    def flush(self) -> None:
+        """fake 不真的写库，flush 只是给调用方一个"已落盘"的锚点。"""
 
 
 def make_candidates() -> list[Candidate]:

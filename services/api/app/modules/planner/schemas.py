@@ -11,6 +11,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.modules.planner.models import Itinerary, PlanState
+from app.modules.planner.pricing import REASON_UNKNOWN, UNVERIFIED
 
 
 class DayPart(StrEnum):
@@ -142,11 +143,73 @@ class PlanStepOut(BaseModel):
     duration_ms: int | None = None
 
 
+class PlaceBriefOut(BaseModel):
+    """行程项里的点位摘要（契约 Place 的子集）。
+
+    只带"要在页面上显示的一行字"需要的字段：名字、区域、坐标、一句话简介、标签。
+    不嵌 facts/sources：逐日安排是列表页级别的信息，把每条说法都塞进来会让
+    一份三天行程的响应膨胀到几百 KB。
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    district: str | None = None
+    lat: float = 0.0
+    lon: float = 0.0
+    summary: str | None = None
+    culture_tags: list[str] = Field(default_factory=list)
+    status: str = "draft"
+
+
+class PlanItemOut(BaseModel):
+    """一天里的一项安排（契约 PlanDetail.days_plan[].items[]）。
+
+    `price_min`/`price_max` 为 null 表示"没有可用价格"，前端据此显示「待核实」；
+    `confidence` 不是 verified 时必须显示「待核实」标记，`reason` 说明为什么。
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    order: int
+    place: PlaceBriefOut | None = None
+    stay_minutes: int = 0
+    transport: str | None = None
+    price_min: int | None = None
+    price_max: int | None = None
+    confidence: str = UNVERIFIED
+    reason: str = REASON_UNKNOWN
+
+
+class PlanDayOut(BaseModel):
+    """一天的安排（契约 PlanDetail.days_plan[]）。day_index 从 1 开始。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    day_index: int
+    items: list[PlanItemOut] = Field(default_factory=list)
+
+
+class CostSummaryOut(BaseModel):
+    """费用汇总（契约 CostSummary），金额单位一律是「分」。
+
+    `unknown_count` 单列：文档要求「缺失项单独计数，不假装是 0」。
+    """
+
+    min_total: int = 0
+    max_total: int = 0
+    currency: str = "CNY"
+    unknown_count: int = 0
+
+
 class PlanDetailOut(PlanOut):
     """GET /plans/{plan_id} 的响应（契约 PlanDetail）。
 
-    前端轮询的就是这个：state 变了说明生成有了进展，steps 变长说明跑到第几站了。
-    cost / days_plan 属于 PL-06（费用与日程标注）的范围，没实现前不返回假数据。
+    前端轮询的就是这个：state 变了说明生成有了进展，steps 变长说明跑到第几站了；
+    days_plan 是逐日安排，cost 是费用汇总（PL-06）。
     """
 
     steps: list[PlanStepOut] = Field(default_factory=list)
+    cost: CostSummaryOut = Field(default_factory=CostSummaryOut)
+    days_plan: list[PlanDayOut] = Field(default_factory=list)

@@ -12,17 +12,19 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from typing import Final
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.errors import Conflict, Forbidden, NotFound
-from app.modules.planner.agents.base import PlaceSource
+from app.modules.planner.agents.base import PlaceSource, PlanContext
 from app.modules.planner.models import (
     AgentStep,
     Itinerary,
+    ItineraryDay,
+    ItineraryItem,
     JobState,
     PlanJob,
     PlanRun,
@@ -30,8 +32,30 @@ from app.modules.planner.models import (
 )
 from app.modules.planner.orchestrator import AGENT_FAILED_CODE, Orchestrator, RunResult
 from app.modules.planner.orchestrator import context_from_itinerary as _context_from_itinerary
+from app.modules.planner.place_facts import (
+    PlaceFactsSource,
+    PlaceView,
+    catalog_place_source,
+)
+from app.modules.planner.pricing import (
+    REASON_PLACE_MISSING,
+    REASON_UNKNOWN,
+    UNVERIFIED,
+    PriceQuote,
+    quote_from_claims,
+    summarize,
+)
 from app.modules.planner.repository import PlannerRepository
-from app.modules.planner.schemas import PlanIn
+from app.modules.planner.schemas import (
+    CostSummaryOut,
+    PlaceBriefOut,
+    PlanDayOut,
+    PlanDetailOut,
+    PlanIn,
+    PlanItemOut,
+    PlanOut,
+    PlanStepOut,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +135,71 @@ def canonical_input_hash(payload: PlanIn) -> str:
         separators=(",", ":"),
     )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _as_int(value: object, *, default: int) -> int:
+    """把流水线传来的松散值收敛成 int（模型给的可能是 str，也可能干脆没有）。"""
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_uuid(value: object) -> uuid.UUID | None:
+    """把 place_id 字符串转成 UUID；不是合法 UUID 就当"没有点位"。
+
+    不抛异常：一个点位 id 写错只该让这一项没有价格，不该让整份行程生成失败。
+    """
+    if isinstance(value, uuid.UUID):
+        return value
+    if not value:
+        return None
+    try:
+        return uuid.UUID(str(value))
+    except ValueError:
+        return None
+
+
+def _as_time(value: object) -> time | None:
+    """解析 "09:00" 这种时段；解析不了就留空（页面上显示"--:--"比编一个时间好）。"""
+    if isinstance(value, time):
+        return value
+    if not value:
+        return None
+    try:
+        return time.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
+def _quote_for(lookup: PlaceFactsSource, place_id: uuid.UUID | None) -> PriceQuote:
+    """取一个点位的价格结论；点位查不到时明确说"资料缺失"，而不是"没有价格来源"。"""
+    if place_id is None:
+        return PriceQuote(None, None, UNVERIFIED, (), REASON_UNKNOWN)
+    place = lookup(place_id)
+    if place is None:
+        return PriceQuote(None, None, UNVERIFIED, (), REASON_PLACE_MISSING)
+    return quote_from_claims(place.claims)
+
+
+def _as_brief(place: PlaceView) -> PlaceBriefOut:
+    """catalog 点位 → 行程项里的点位摘要。"""
+    return PlaceBriefOut(
+        id=place.id,
+        name=place.name,
+        district=place.district,
+        lat=place.lat,
+        lon=place.lon,
+        summary=place.summary,
+        culture_tags=list(place.culture_tags),
+        status=place.status,
+    )
+
+
+def _maybe_brief(place: PlaceView | None) -> PlaceBriefOut | None:
+    """点位查不到时返回 None：详情里这一项仍然保留（用户要看的是日程本身），
+    只是没有名字和坐标 —— 比整份行程报 500 好。"""
+    return _as_brief(place) if place is not None else None
 
 
 @dataclass(frozen=True)
@@ -288,11 +377,15 @@ class PlannerService:
         run: PlanRun,
         *,
         place_source: PlaceSource | None = None,
+        places: PlaceFactsSource | None = None,
     ) -> RunResult:
         """跑完整条流水线，把每一步落成 agent_steps，再给行程和生成记录收尾。
 
         由 worker 调用（PL-05 起不再挂在请求线程里），
         验收看的是「四步都留痕、失败能定位到哪一站」，不看吞吐。
+
+        成功时顺手把排好的日程落库并标价（PL-06）：目录结构要跟着生成结果走，
+        所以放在这里而不是入队时——入队时还没有日程。
         """
         result = Orchestrator(place_source=place_source).run(_context_from_itinerary(itinerary))
         for index, step in enumerate(result.steps):
@@ -307,6 +400,7 @@ class PlannerService:
                 )
             )
         if result.ok:
+            self.persist_plan(itinerary, result.context, places=places)
             self.finish_ready(itinerary, run)
         else:
             failed = result.failed_step
@@ -318,6 +412,111 @@ class PlannerService:
             )
             self.finish_failed(itinerary, run, error_code=result.error_code or AGENT_FAILED_CODE)
         return result
+
+    def persist_plan(
+        self,
+        itinerary: Itinerary,
+        context: PlanContext,
+        *,
+        places: PlaceFactsSource | None = None,
+    ) -> None:
+        """把流水线排好的日程落成逐日安排，并给每一项算价格与可信度（PL-06）。
+
+        先清后写：重新生成时如果只追加，旧的第 3 天会留在新生成的两天行程里。
+        价格不是"查到了就填"：只有来源可信才填数字，其余留空并标「待核实」，
+        这样前端把 `confidence != verified` 的项打上标记就是准的。
+        """
+        lookup = places or catalog_place_source(self.db)
+        self.repo.clear_plan_content(itinerary.id)
+
+        days: dict[int, ItineraryDay] = {}
+        for entry in context.schedule or []:
+            day_index = _as_int(entry.get("day_index"), default=1)
+            day = days.get(day_index)
+            if day is None:
+                day = ItineraryDay(
+                    itinerary_id=itinerary.id,
+                    day_index=day_index,
+                    summary=f"第 {day_index} 天",
+                )
+                self.db.add(day)
+                days[day_index] = day
+
+            place_id = _as_uuid(entry.get("place_id"))
+            quote = _quote_for(lookup, place_id)
+            day.items.append(
+                ItineraryItem(
+                    order=_as_int(entry.get("order"), default=len(day.items) + 1),
+                    place_id=place_id,
+                    start_time=_as_time(entry.get("start_time")),
+                    stay_minutes=_as_int(entry.get("stay_minutes"), default=0),
+                    transport=entry.get("transport"),
+                    price_min=quote.min_cents,
+                    price_max=quote.max_cents,
+                    confidence=quote.confidence,
+                    source_ids=list(quote.source_urls),
+                    note=quote.reason,
+                )
+            )
+        self.db.flush()
+
+    def cost_summary(self, itinerary: Itinerary) -> CostSummaryOut:
+        """整份行程的费用汇总（契约 CostSummary）。"""
+        days = self.repo.days_for_itinerary(itinerary.id)
+        total = summarize(item for day in days for item in day.items)
+        return CostSummaryOut(
+            min_total=total.min_total,
+            max_total=total.max_total,
+            currency=total.currency,
+            unknown_count=total.unknown_count,
+        )
+
+    def detail(
+        self,
+        *,
+        user_id: uuid.UUID,
+        plan_id: uuid.UUID,
+        places: PlaceFactsSource | None = None,
+    ) -> PlanDetailOut:
+        """组装详情响应：回执字段 + 四个 Agent 的留痕 + 逐日安排 + 费用汇总。
+
+        由 service 组装而不是 router：router 只做解码和返回，
+        拼装（还要读 catalog 拿点位摘要）属于业务。
+        """
+        itinerary, run, steps = self.get_detail(user_id=user_id, plan_id=plan_id)
+        lookup = places or catalog_place_source(self.db)
+        days = self.repo.days_for_itinerary(itinerary.id)
+
+        days_plan: list[PlanDayOut] = []
+        for day in days:
+            items = [
+                PlanItemOut(
+                    order=item.order,
+                    place=_maybe_brief(lookup(item.place_id)) if item.place_id else None,
+                    stay_minutes=item.stay_minutes,
+                    transport=item.transport,
+                    price_min=item.price_min,
+                    price_max=item.price_max,
+                    confidence=item.confidence or UNVERIFIED,
+                    reason=item.note or REASON_UNKNOWN,
+                )
+                for item in day.items
+            ]
+            days_plan.append(PlanDayOut(day_index=day.day_index, items=items))
+
+        base = PlanOut.from_itinerary(itinerary, run_id=run.id if run is not None else None)
+        total = summarize(item for day in days for item in day.items)
+        return PlanDetailOut(
+            **base.model_dump(),
+            steps=[PlanStepOut.model_validate(step) for step in steps],
+            cost=CostSummaryOut(
+                min_total=total.min_total,
+                max_total=total.max_total,
+                currency=total.currency,
+                unknown_count=total.unknown_count,
+            ),
+            days_plan=days_plan,
+        )
 
     # ----- 后台任务（PL-05） -------------------------------------------------
 
@@ -344,6 +543,7 @@ class PlannerService:
         job: PlanJob,
         *,
         place_source: PlaceSource | None = None,
+        places: PlaceFactsSource | None = None,
     ) -> RunResult | None:
         """执行一条已领到的任务，并按结果给任务收尾。
 
@@ -364,7 +564,7 @@ class PlannerService:
         self.db.flush()
         self._rearm(itinerary, run)
 
-        result = self.run_agents(itinerary, run, place_source=place_source)
+        result = self.run_agents(itinerary, run, place_source=place_source, places=places)
         if result.ok:
             job.state = JobState.DONE
             job.last_error = None
