@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.core.deps import CurrentUser, CurrentUserDep
 from app.core.errors import Unauthorized
-from app.modules.planner.schemas import PlanDetailOut, PlanIn, PlanOut, PlanStepOut
+from app.modules.planner.schemas import PlanDetailOut, PlanIn, PlanOut
 from app.modules.planner.service import PlannerService
 
 router = APIRouter(prefix="/plans", tags=["plans"])
@@ -62,22 +62,20 @@ def create_plan(
 @router.get(
     "/{plan_id}",
     response_model=PlanDetailOut,
-    summary="行程详情（含步骤进度）",
+    summary="行程详情（含步骤、逐日安排与费用）",
 )
 def get_plan(
     plan_id: uuid.UUID,
     user: CurrentUserDep,
     db: Annotated[Session, Depends(get_db)],
 ) -> PlanDetailOut:
-    """取一张行程的当前状态与步骤留痕——前端轮询的就是这个接口。
+    """取一张行程的当前状态、步骤留痕、逐日安排与费用汇总——前端轮询的就是这个接口。
 
     steps 按执行顺序返回：前端据此显示"已经跑完调研、正在排日程"，
-    而不是干等一个转圈。
+    而不是干等一个转圈。days_plan 里每一项都带 confidence，
+    前端对非 verified 的项必须打「待核实」，这是 PL-06 的验收口径。
     """
-    itinerary, run, steps = PlannerService(db).get_detail(user_id=_user_uuid(user), plan_id=plan_id)
-    detail = PlanDetailOut.from_itinerary(itinerary, run_id=run.id if run is not None else None)
-    detail.steps = [PlanStepOut.model_validate(step) for step in steps]
-    return detail
+    return PlannerService(db).detail(user_id=_user_uuid(user), plan_id=plan_id)
 
 
 # ===== 待实现端点（认领任务卡后逐条填） =====

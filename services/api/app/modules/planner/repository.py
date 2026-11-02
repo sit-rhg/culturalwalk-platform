@@ -6,10 +6,18 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta
 
-from sqlalchemy import select, update
-from sqlalchemy.orm import Session
+from sqlalchemy import delete, select, update
+from sqlalchemy.orm import Session, selectinload
 
-from app.modules.planner.models import AgentStep, Itinerary, JobState, PlanJob, PlanRun
+from app.modules.planner.models import (
+    AgentStep,
+    Itinerary,
+    ItineraryDay,
+    ItineraryItem,
+    JobState,
+    PlanJob,
+    PlanRun,
+)
 
 
 class PlannerRepository:
@@ -64,6 +72,33 @@ class PlannerRepository:
             .order_by(AgentStep.step_index, AgentStep.created_at)
         )
         return list(self.db.scalars(stmt).all())
+
+    # ----- 行程内容（PL-06） -------------------------------------------------
+
+    def days_for_itinerary(self, itinerary_id: uuid.UUID) -> list[ItineraryDay]:
+        """取一份行程的逐日安排，连带把当天每一项一起捞出来。
+
+        `selectinload` 而不是惰性加载：详情接口要一次性把 days + items 都序列化，
+        惰性加载会变成 N+1 次查询；一次 IN 查询把 items 全捞回来更省。
+        """
+        stmt = (
+            select(ItineraryDay)
+            .where(ItineraryDay.itinerary_id == itinerary_id)
+            .order_by(ItineraryDay.day_index)
+            .options(selectinload(ItineraryDay.items))
+        )
+        return list(self.db.scalars(stmt).all())
+
+    def clear_plan_content(self, itinerary_id: uuid.UUID) -> None:
+        """清掉一份行程已有的逐日安排。
+
+        重新生成时先清后写：否则旧的第 3 天会留在新生成的两天行程里，
+        用户看到的是两次结果的混合体。先删 items 再删 days，避免外键悬挂。
+        """
+        day_ids = select(ItineraryDay.id).where(ItineraryDay.itinerary_id == itinerary_id)
+        self.db.execute(delete(ItineraryItem).where(ItineraryItem.day_id.in_(day_ids)))
+        self.db.execute(delete(ItineraryDay).where(ItineraryDay.itinerary_id == itinerary_id))
+        self.db.flush()
 
     # ----- 后台任务（PL-05） -------------------------------------------------
 
