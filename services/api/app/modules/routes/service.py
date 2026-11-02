@@ -162,15 +162,9 @@ class RoutesService:
         idempotency_key: str,
     ) -> RouteDraft:
         draft = self._load_owned(draft_id=draft_id, owner_id=owner_id)
-        if draft.state is not DraftState.EDITING:
-            raise Conflict(
-                "草稿已提交或已归档，不能再修改；需要改请新建草稿",
-                code="DRAFT_NOT_EDITABLE",
-            )
-
         request_hash = _input_hash(payload, exclude_unset=True)
-        # 同一个 PATCH 重试（网络超时后前端重点一次）：直接返回上次的结果，
-        # 不重复 +1 版本号，否则客户端会以为自己的修改被别的窗口覆盖了。
+        # 幂等重放排在状态检查之前：先成功的写、事后再被锁定，
+        # 重试仍该拿到那次成功的结果，而不是 409「已提交不能再改」。
         if draft.patch_key == idempotency_key:
             if draft.patch_hash != request_hash:
                 raise Conflict(
@@ -184,6 +178,12 @@ class RoutesService:
                     ],
                 )
             return draft
+
+        if draft.state is not DraftState.EDITING:
+            raise Conflict(
+                "草稿已提交或已归档，不能再修改；需要改请新建草稿",
+                code="DRAFT_NOT_EDITABLE",
+            )
 
         if if_match != draft.lock_version:
             raise PreconditionFailed(

@@ -294,6 +294,30 @@ def test_patch_same_key_different_body_is_conflict(client: TestClient, user_head
     assert response.json()["error"]["code"] == "IDEMPOTENCY_KEY_REUSED"
 
 
+def test_patch_replay_returns_original_after_draft_locked(
+    client: TestClient, user_headers: dict, db_session: Session
+) -> None:
+    """先成功、后锁定的重试：幂等重放必须排在状态检查之前。
+
+    否则网络超时后前端重试同一 PATCH，会收到 409「已提交不能再改」，
+    可实际上这次修改早就成功了——客户端会误判成失败。
+    """
+    draft = _create(client, user_headers)
+    key = _key()
+    first = _patch(client, user_headers, draft["id"], if_match=1, key=key, title="一次")
+    assert first.status_code == 200
+
+    row = db_session.get(RouteDraft, uuid.UUID(draft["id"]))
+    assert row is not None
+    row.state = DraftState.SUBMITTED_LOCKED
+    db_session.commit()
+
+    replay = _patch(client, user_headers, draft["id"], if_match=2, key=key, title="一次")
+    assert replay.status_code == 200
+    assert replay.json()["title"] == "一次"
+    assert replay.json()["lock_version"] == 2
+
+
 # ===== 删除 =====
 def test_delete_editing_draft(client: TestClient, user_headers: dict) -> None:
     draft = _create(client, user_headers)
