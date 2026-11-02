@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     # 外部 Provider（留空则走 fake 实现，便于无网演示）
     map_provider: str = "fake"  # fake | amap | tencent
     map_api_key: str = ""
+    # 供应商坐标系/许可核验通过后才允许置 True；核验前接真实 Provider 只会写进偏移坐标
+    map_datum_verified: bool = False
+    map_timeout_seconds: float = 3.0
     llm_provider: str = "fake"  # fake | openai-compatible
     llm_base_url: str = ""
     llm_api_key: str = ""
