@@ -6,7 +6,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 class RegisterIn(BaseModel):
@@ -18,9 +18,8 @@ class RegisterIn(BaseModel):
 
     username: str = Field(min_length=3, max_length=24)
     password: str = Field(min_length=8)
-    # 契约写的是 format: email，但校验它要引入 email-validator 这个新依赖；
-    # 现阶段只做长度约束，格式校验留给后面做资料编辑的卡片一起处理。
-    email: str | None = Field(default=None, max_length=254)
+    # EmailStr 就是契约里的 format: email（由 email-validator 提供），格式不对直接 422
+    email: EmailStr | None = Field(default=None, max_length=254)
 
 
 class LoginIn(BaseModel):
@@ -32,18 +31,6 @@ class LoginIn(BaseModel):
 
 class RefreshIn(BaseModel):
     refresh_token: str
-
-
-class LogoutIn(BaseModel):
-    """POST /auth/logout 的可选请求体。
-
-    契约里 logout 没有请求体，但 access 令牌的 payload 不带 session id
-    （见 app/core/deps.py#create_access_token），只凭它定位不到"该退哪一次会话"。
-    带上 refresh_token 就精确退那一次；不带则退掉该用户全部未撤销会话。
-    两种语义都返回契约要求的 204。
-    """
-
-    refresh_token: str | None = None
 
 
 class UserOut(BaseModel):
