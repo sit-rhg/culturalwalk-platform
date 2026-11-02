@@ -10,7 +10,7 @@ from datetime import datetime
 from sqlalchemy import and_, or_, select, text
 from sqlalchemy.orm import Session, lazyload
 
-from app.modules.catalog.models import Place
+from app.modules.catalog.models import Place, PlaceStatus
 
 
 def _escape_like(value: str) -> str:
@@ -34,7 +34,11 @@ class CatalogRepository:
         """按 (created_at, id) 倒序取一页；after 为上一页最后一条的位置。"""
         # 列表用不到 facts：把 selectin 拉回默认 lazy，省掉那次额外查询；
         # 详情接口走 db.get()，facts/source 照常按 relationship 配置加载。
-        stmt = select(Place).options(lazyload(Place.facts))
+        #
+        # 公开读接口只给已发布：草稿点位不能出现在列表里（必读1 §5 第 9 条）。
+        stmt = (
+            select(Place).options(lazyload(Place.facts)).where(Place.status == PlaceStatus.VERIFIED)
+        )
         if q:
             pattern = f"%{_escape_like(q)}%"
             stmt = stmt.where(

@@ -383,13 +383,28 @@ def test_detail_with_malformed_id_is_validation_error(client: TestClient) -> Non
     assert body["details"][0]["field"] == "place_id"
 
 
-def test_detail_of_draft_place_is_still_readable(
+def test_list_hides_draft_places(
     client: TestClient, session_factory: sessionmaker[Session]
 ) -> None:
-    """契约把 status 摆在明面上：草稿点位的详情照常返回，由前端决定要不要展示。"""
+    """公开列表只给已发布：草稿点位连"存在过"都不该被搜到。
+
+    必读1 §5 第 9 条：公开读接口只能读已发布内容；草稿、审核中、已下线一律 404。
+    """
+    published = _add_place(session_factory, name="已核实点位")
+    _add_place(session_factory, name="草稿点位", status=PlaceStatus.DRAFT)
+
+    body = client.get(ENDPOINT).json()
+
+    assert [item["id"] for item in body["items"]] == [str(published)]
+
+
+def test_detail_of_draft_place_is_hidden(
+    client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    """草稿详情按"不存在"处理：返回 404 而不是 200 + status=draft，避免泄露存在性。"""
     place_id = _add_place(session_factory, name="待核实点位", status=PlaceStatus.DRAFT)
 
-    detail = client.get(f"{ENDPOINT}/{place_id}").json()
+    response = client.get(f"{ENDPOINT}/{place_id}")
 
-    assert detail["status"] == "draft"
-    assert detail["facts"] == []
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "PLACE_NOT_FOUND"

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import NotFound
 from app.core.pagination import DEFAULT_LIMIT, MAX_LIMIT, decode_cursor, encode_cursor
-from app.modules.catalog.models import Place
+from app.modules.catalog.models import Place, PlaceStatus
 from app.modules.catalog.repository import CatalogRepository
 from app.modules.catalog.schemas import PlaceDetailOut, PlaceFactOut, SourceOut
 
@@ -58,7 +58,8 @@ class CatalogService:
 
     def get_place(self, place_id: uuid.UUID) -> PlaceDetailOut:
         place = self.repo.get_place(place_id)
-        if place is None:
+        # 草稿按"不存在"处理：404 而不是 200 + status=draft，连存在性都不泄露（必读1 §5 第 9 条）。
+        if place is None or place.status != PlaceStatus.VERIFIED:
             raise NotFound("地点不存在", code="PLACE_NOT_FOUND")
         return _detail_out(place)
 
