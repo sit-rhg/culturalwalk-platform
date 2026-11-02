@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port 5173",
+    "dev:real": "node scripts/dev-real.mjs",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview --port 4173",
     "lint": "eslint src --ext .ts,.vue",
