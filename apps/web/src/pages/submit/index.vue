@@ -4,8 +4,10 @@ import { computed, onMounted, ref } from 'vue'
 
 import type { Schemas } from '@/api/types'
 import { ApiError, api } from '@/shared/api'
+import { pendingEndpoint } from '@/shared/capabilities'
 import { draftStateLabel, shortDate } from '@/shared/format'
 import { isLoggedIn } from '@/shared/session'
+import DemoNotice from '@/shared/ui/DemoNotice.vue'
 import EmptyState from '@/shared/ui/EmptyState.vue'
 import Modal from '@/shared/ui/Modal.vue'
 import Skeleton from '@/shared/ui/Skeleton.vue'
@@ -106,7 +108,8 @@ async function confirmSubmit(): Promise<void> {
   submitting.value = true
   submitError.value = ''
   try {
-    await api.post<Schemas['Submission']>(`/route-drafts/${draft.id}/submit`)
+    // 送审接口还没实现：真接口模式下也用演示数据，草稿列表本身走真接口
+    await api.mock.post<Schemas['Submission']>(`/route-drafts/${draft.id}/submit`)
     drafts.value = markSubmitted(drafts.value, draft.id)
     successText.value = `「${draft.title}」已提交，正在审核中`
     pendingDraft.value = null
@@ -139,6 +142,8 @@ onMounted(() => {
       <h2>我的路线</h2>
       <p class="muted">草稿状态与提交审核</p>
     </div>
+
+    <DemoNotice v-if="isLoggedIn" :endpoint="pendingEndpoint('draftSubmit')" />
 
     <div v-if="!isLoggedIn" class="card">
       <EmptyState title="登录后才能管理草稿" hint="草稿列表和提交审核都需要登录。">

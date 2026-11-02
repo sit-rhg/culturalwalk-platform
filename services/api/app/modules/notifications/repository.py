@@ -22,6 +22,9 @@ class NotificationsRepository:
         self.db.flush()
         return notification
 
+    def get(self, notification_id: uuid.UUID) -> Notification | None:
+        return self.db.get(Notification, notification_id)
+
     def list_for_user(
         self,
         user_id: uuid.UUID,

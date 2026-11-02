@@ -14,13 +14,17 @@ import {
   reviewTaskStateLabel,
   type ReviewDecision,
 } from '@/modules/review-queue/state'
+import { notificationKindLabel, payloadText } from '@/pages/me/logic'
 import { ApiError, api } from '@/shared/api'
-import { reviewActionLabel } from '@/shared/format'
+import { pendingEndpoint } from '@/shared/capabilities'
+import { relativeTime, reviewActionLabel } from '@/shared/format'
 import { isAdmin, isLoggedIn, refreshMe } from '@/shared/session'
+import DemoNotice from '@/shared/ui/DemoNotice.vue'
 import EmptyState from '@/shared/ui/EmptyState.vue'
 import Modal from '@/shared/ui/Modal.vue'
 import Skeleton from '@/shared/ui/Skeleton.vue'
 
+type Notification = Schemas['Notification']
 type ReviewTask = Schemas['ReviewTask']
 type SubmissionDetail = Schemas['SubmissionDetail']
 
@@ -29,6 +33,11 @@ const loading = ref(true)
 const listError = ref('')
 const busyId = ref<string | null>(null)
 const notice = ref('')
+
+/** 审核通知走真接口（GET /notifications），审核任务本身还是演示数据 */
+const notices = ref<Notification[]>([])
+const noticesLoading = ref(true)
+const noticesError = ref('')
 
 const activeTask = ref<ReviewTask | null>(null)
 const submission = ref<SubmissionDetail | null>(null)
@@ -67,7 +76,8 @@ async function loadTasks(): Promise<void> {
   loading.value = true
   listError.value = ''
   try {
-    const data = await api.get<{ items: ReviewTask[] }>('/review/tasks')
+    // 审核队列接口待 moderation 模块实现：真接口模式下也走演示数据
+    const data = await api.mock.get<{ items: ReviewTask[] }>('/review/tasks')
     tasks.value = data.items ?? []
   } catch (error) {
     listError.value = errorMessage(error)
@@ -76,11 +86,28 @@ async function loadTasks(): Promise<void> {
   }
 }
 
+async function loadNotices(): Promise<void> {
+  if (!isLoggedIn.value) {
+    noticesLoading.value = false
+    return
+  }
+  noticesLoading.value = true
+  noticesError.value = ''
+  try {
+    const data = await api.get<{ items: Notification[] }>('/notifications?limit=20')
+    notices.value = data.items ?? []
+  } catch (error) {
+    noticesError.value = errorMessage(error)
+  } finally {
+    noticesLoading.value = false
+  }
+}
+
 async function claim(taskId: string): Promise<void> {
   busyId.value = taskId
   listError.value = ''
   try {
-    const claimed = await api.post<ReviewTask>('/review/tasks/' + taskId + '/claim')
+    const claimed = await api.mock.post<ReviewTask>('/review/tasks/' + taskId + '/claim')
     upsert(claimed)
     if (activeTask.value?.id === taskId) activeTask.value = { ...activeTask.value, ...claimed }
     notice.value = '已领取任务 ' + taskId
@@ -103,7 +130,7 @@ async function selectTask(task: ReviewTask): Promise<void> {
   }
   detailLoading.value = true
   try {
-    submission.value = await api.get<SubmissionDetail>('/submissions/' + submissionId)
+    submission.value = await api.mock.get<SubmissionDetail>('/submissions/' + submissionId)
   } catch (error) {
     detailError.value = errorMessage(error)
   } finally {
@@ -135,7 +162,7 @@ async function submitDecision(): Promise<void> {
   submitting.value = true
   actionError.value = ''
   try {
-    const decided = await api.post<ReviewTask>('/review/tasks/' + task.id + '/decision', {
+    const decided = await api.mock.post<ReviewTask>('/review/tasks/' + task.id + '/decision', {
       action,
       note: note.value.trim(),
     })
@@ -155,7 +182,7 @@ async function submitDecision(): Promise<void> {
 
 onMounted(async () => {
   await refreshMe()
-  await loadTasks()
+  await Promise.all([loadTasks(), loadNotices()])
 })
 </script>
 
@@ -173,8 +200,32 @@ onMounted(async () => {
     </EmptyState>
 
     <template v-else>
+      <DemoNotice :endpoint="pendingEndpoint('reviewQueue')" />
       <p v-if="notice" class="ok-banner">{{ notice }}</p>
       <p v-if="listError" class="error-text">{{ listError }}</p>
+
+      <div class="section-title">审核通知</div>
+      <Skeleton v-if="noticesLoading" :lines="2" />
+      <p v-else-if="noticesError" class="error-text">{{ noticesError }}</p>
+      <EmptyState
+        v-else-if="!notices.length"
+        title="暂无审核通知"
+        hint="路线审核有结果后，消息会出现在这里"
+      />
+      <ul v-else class="notice-list">
+        <li v-for="item in notices" :key="item.id" class="card notice-card">
+          <div class="row notice-head">
+            <strong>{{ notificationKindLabel(item.type) }}</strong>
+            <span class="muted">{{ relativeTime(item.created_at) }}</span>
+          </div>
+          <p v-if="payloadText(item.payload, 'title')" class="notice-title">
+            {{ payloadText(item.payload, 'title') }}
+          </p>
+          <p v-if="payloadText(item.payload, 'reason')" class="notice-reason">
+            理由：{{ payloadText(item.payload, 'reason') }}
+          </p>
+        </li>
+      </ul>
 
       <Skeleton v-if="loading" :lines="4" />
 
@@ -273,5 +324,27 @@ onMounted(async () => {
 
 .actions {
   margin: 4px 0 12px;
+}
+
+.notice-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.notice-head {
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.notice-title,
+.notice-reason {
+  margin: 6px 0 0;
+  font-size: 14px;
+}
+
+.notice-reason {
+  color: var(--brand);
+  font-size: 13px;
 }
 </style>

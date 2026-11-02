@@ -8,14 +8,29 @@
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
+from app.core.deps import CurrentUser
 from app.core.errors import NotFound
 from app.core.pagination import DEFAULT_LIMIT, MAX_LIMIT, decode_cursor, encode_cursor
-from app.modules.catalog.models import Place, PlaceStatus
+from app.modules.audit import service as audit
+from app.modules.catalog.models import (
+    FactConfidence,
+    Place,
+    PlaceFact,
+    PlaceSource,
+    PlaceStatus,
+)
 from app.modules.catalog.repository import CatalogRepository
-from app.modules.catalog.schemas import PlaceDetailOut, PlaceFactOut, SourceOut
+from app.modules.catalog.schemas import (
+    PlaceCreateIn,
+    PlaceDetailOut,
+    PlaceFactCreateIn,
+    PlaceFactOut,
+    SourceOut,
+)
 
 
 def _clean(value: str | None) -> str | None:
@@ -62,6 +77,92 @@ class CatalogService:
         if place is None or place.status != PlaceStatus.VERIFIED:
             raise NotFound("地点不存在", code="PLACE_NOT_FOUND")
         return _detail_out(place)
+
+    # ---------- 写 ----------
+
+    def create_place(
+        self, payload: PlaceCreateIn, *, actor: CurrentUser, request_id: str | None = None
+    ) -> Place:
+        """新增地点，落在 draft：编辑器补完来源、核对坐标后才由审核流程置 verified。
+
+        坐标用 Decimal 而不是 float 落库：经纬度是标识符，float 的末位误差会让点位漂移。
+        """
+        place = Place(
+            name=payload.name,
+            district=_clean(payload.district),
+            lat=Decimal(str(payload.lat)),
+            lon=Decimal(str(payload.lon)),
+            crs=payload.crs,
+            summary=_clean(payload.summary),
+            culture_tags=list(payload.culture_tags),
+            status=PlaceStatus.DRAFT,
+        )
+        self.repo.add_place(place)
+        audit.write(
+            self.db,
+            action="place.create",
+            object_type="place",
+            object_id=str(place.id),
+            actor_id=actor.id,
+            actor_username=actor.username,
+            after_hash=audit.AuditService.digest(payload.model_dump()),
+            request_id=request_id,
+        )
+        return place
+
+    def add_fact(
+        self,
+        place_id: uuid.UUID,
+        payload: PlaceFactCreateIn,
+        *,
+        actor: CurrentUser,
+        request_id: str | None = None,
+    ) -> PlaceFactOut:
+        """给地点补一条文化资料，同时落它的来源。
+
+        来源必填由 schema 保证（422）；这里再判一次地点存在，避免给不存在的点位
+        挂一条永远读不到的 fact。
+        """
+        place = self.repo.get_place(place_id)
+        if place is None:
+            raise NotFound("地点不存在", code="PLACE_NOT_FOUND")
+
+        source = PlaceSource(
+            title=payload.source.title,
+            url=payload.source.url,
+            publisher=payload.source.publisher,
+        )
+        fact = PlaceFact(
+            place_id=place.id,
+            claim=payload.claim,
+            confidence=FactConfidence(payload.confidence),
+            source=source,
+        )
+        self.repo.add_source(source)
+        self.repo.add_fact(fact)
+        audit.write(
+            self.db,
+            action="place.fact.create",
+            object_type="place_fact",
+            object_id=str(fact.id),
+            actor_id=actor.id,
+            actor_username=actor.username,
+            after_hash=audit.AuditService.digest(
+                {
+                    "place_id": str(place.id),
+                    "claim": payload.claim,
+                    "confidence": payload.confidence,
+                    "source_url": payload.source.url,
+                }
+            ),
+            request_id=request_id,
+        )
+        return PlaceFactOut(
+            id=fact.id,
+            claim=fact.claim,
+            confidence=fact.confidence.value,
+            sources=[SourceOut.model_validate(source)],
+        )
 
 
 def _detail_out(place: Place) -> PlaceDetailOut:

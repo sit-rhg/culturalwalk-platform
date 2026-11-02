@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
@@ -19,6 +19,11 @@ from app.modules.notifications.schemas import NotificationListOut, NotificationO
 from app.modules.notifications.service import DEFAULT_LIMIT, MAX_LIMIT, NotificationsService
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
+
+IdempotencyKey = Annotated[
+    str,
+    Header(alias="Idempotency-Key", min_length=8, max_length=64, description="幂等键"),
+]
 
 
 def _user_id_of(user: CurrentUser) -> uuid.UUID:
@@ -42,3 +47,26 @@ def list_notifications(
         items=[NotificationOut.model_validate(item) for item in items],
         next_cursor=next_cursor,
     )
+
+
+@router.post(
+    "/{notification_id}/read",
+    status_code=204,
+    summary="标记通知已读（幂等）",
+    responses={200: {"description": "已经是已读状态（重复标记）"}},
+)
+def mark_notification_read(
+    notification_id: uuid.UUID,
+    user: CurrentUserDep,
+    db: Annotated[Session, Depends(get_db)],
+    request: Request,
+    idempotency_key: IdempotencyKey,
+) -> Response:
+    # 首次已读按契约回 204；重复标记回 200，让客户端能区分"这次改了"和"本来就已读"。
+    first_time = NotificationsService(db).mark_read(
+        notification_id,
+        user_id=_user_id_of(user),
+        username=user.username,
+        request_id=getattr(request.state, "request_id", None),
+    )
+    return Response(status_code=204 if first_time else 200)

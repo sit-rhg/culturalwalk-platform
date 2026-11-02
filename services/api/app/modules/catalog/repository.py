@@ -10,7 +10,7 @@ from datetime import datetime
 from sqlalchemy import and_, or_, select, text
 from sqlalchemy.orm import Session, lazyload
 
-from app.modules.catalog.models import Place, PlaceStatus
+from app.modules.catalog.models import Place, PlaceFact, PlaceSource, PlaceStatus
 
 
 def _escape_like(value: str) -> str:
@@ -66,6 +66,21 @@ class CatalogRepository:
 
     def get_place(self, place_id: uuid.UUID) -> Place | None:
         return self.db.get(Place, place_id)
+
+    def add_place(self, place: Place) -> Place:
+        self.db.add(place)
+        self.db.flush()
+        return place
+
+    def add_source(self, source: PlaceSource) -> PlaceSource:
+        self.db.add(source)
+        self.db.flush()
+        return source
+
+    def add_fact(self, fact: PlaceFact) -> PlaceFact:
+        self.db.add(fact)
+        self.db.flush()
+        return fact
 
     def _tag_condition(self, tag: str):
         """`?tag=` 的方言分支：两边存的都是 JSON 数组，但过滤语法不通用。
