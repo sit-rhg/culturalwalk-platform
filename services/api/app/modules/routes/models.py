@@ -9,6 +9,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Any
 
 from sqlalchemy import (
     JSON,
@@ -187,3 +188,42 @@ class RouteNode(Base):
     )
 
     draft: Mapped[RouteDraft] = relationship(back_populates="nodes")
+
+
+class RouteVersion(Base):
+    """草稿冻结出的不可变版本（docs/02 §2.3）。
+
+    提交审核、审批、发布引用的都是这里的 `version_id + content_hash`；
+    冻结之后本行不再接受任何写入（要改内容只能 fork 新草稿）。快照存整份
+    JSON，而不是引用草稿行：草稿随时会被作者改，版本必须能独立重放。
+    """
+
+    __tablename__ = "route_versions"
+    __table_args__ = (
+        # 同一份草稿的版本号递增；并发冻结靠它兜住，撞了重算一次。
+        UniqueConstraint("draft_id", "version_no", name="uq_route_versions_draft_version_no"),
+        CheckConstraint("version_no >= 1", name="ck_route_versions_version_no"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # 发布（RT-05）前草稿没有 route_id，所以这里可空；发布时回填。
+    route_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True, index=True
+    )
+    # 版本来自哪份草稿。ON DELETE RESTRICT：被冻结过的草稿不允许物理删除，
+    # 否则版本会变成孤儿；归档用 state=ARCHIVED，不动行。
+    draft_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("route_drafts.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    version_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    # 整条路线的快照。PG 落 JSONB（可查询、可建 GIN），SQLite 单测退化成 JSON。
+    snapshot: Mapped[dict[str, Any]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False
+    )
+    # sha256(canonical_json(snapshot))，见 service._content_hash。
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    # 谁冻结的；跨模块裸 ID（users 表尚未建）。
+    created_by: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )

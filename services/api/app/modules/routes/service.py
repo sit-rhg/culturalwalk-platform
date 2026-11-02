@@ -20,7 +20,7 @@ from app.core.errors import Conflict, Forbidden, NotFound, PreconditionFailed, V
 from app.core.pagination import decode_cursor, encode_cursor
 from app.modules.catalog.schemas import PlaceOut
 from app.modules.catalog.service import CatalogService
-from app.modules.routes.models import DraftState, RouteDraft, RouteNode
+from app.modules.routes.models import DraftState, RouteDraft, RouteNode, RouteVersion
 from app.modules.routes.repository import RoutesRepository
 from app.modules.routes.schemas import (
     CostSummaryOut,
@@ -36,6 +36,19 @@ from app.modules.routes.schemas import (
 # 与 catalog 的 PlaceStatus.VERIFIED 落库值一致（小写）。这里不 import 别人的
 # ORM 枚举，避免 routes 依赖 catalog 的表定义；值变化由契约测试兜住。
 _PUBLISHED_PLACE_STATUS = "verified"
+
+# 并发冻结时版本号可能撞车：回滚到保存点重算，最多试三次。
+_FREEZE_ATTEMPTS = 3
+
+
+def _content_hash(snapshot: dict[str, Any]) -> str:
+    """sha256(canonical_json(snapshot))，见 docs/02 §2.3。
+
+    sort_keys + 紧凑分隔符：同一份内容无论字段插入顺序如何都得到同一个 hash，
+    审批与发布才能用 `version_id + content_hash` 精确授权。
+    """
+    canonical = json.dumps(snapshot, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _input_hash(payload: BaseModel, *, exclude_unset: bool = False) -> str:
@@ -351,6 +364,66 @@ class RoutesService:
             values["duration_minutes"] = payload.duration_minutes
         return values
 
+    # ===== 版本冻结 =====
+    def freeze_version(
+        self, *, draft_id: uuid.UUID, actor_id: uuid.UUID | None = None
+    ) -> RouteVersion:
+        """把草稿当前内容冻结成不可变版本（RT-03）。
+
+        只做快照与落库，不推状态机：提交审核（MD-01）在同一个事务里调用本方法，
+        拿到 version 后再建 submission 并锁草稿。冻结过的草稿不允许再删除——
+        版本必须能独立重放，不能因为删草稿而留下孤儿行。
+        """
+        draft = self.repo.get(draft_id)
+        if draft is None:
+            raise NotFound("草稿不存在", code="DRAFT_NOT_FOUND")
+        snapshot = self._snapshot(draft)
+        content_hash = _content_hash(snapshot)
+        for _ in range(_FREEZE_ATTEMPTS):
+            version = RouteVersion(
+                draft_id=draft.id,
+                route_id=draft.route_id,
+                version_no=self.repo.next_version_no(draft.id),
+                snapshot=snapshot,
+                content_hash=content_hash,
+                created_by=actor_id,
+            )
+            try:
+                # 保存点而不是整体 rollback：调用方（提交审核）同一事务里还有
+                # submission/审计等写入，不能因为版本号撞车全部丢掉。
+                with self.db.begin_nested():
+                    self.db.add(version)
+                    self.db.flush()
+            except IntegrityError:
+                continue
+            return version
+        raise Conflict("版本号分配冲突，请重试", code="VERSION_CONFLICT")
+
+    def _snapshot(self, draft: RouteDraft) -> dict[str, Any]:
+        """草稿 → 规范快照。
+
+        只收内容字段：id、时间戳、lock_version 这类易变值不进快照，否则同一份
+        内容冻结两次会得到不同 hash，审批就无法按 hash 精确授权。
+        """
+        return {
+            "title": draft.title,
+            "summary": draft.summary,
+            "theme_tags": list(draft.theme_tags or []),
+            "duration_minutes": draft.duration_minutes,
+            "nodes": [
+                {
+                    "position": node.position,
+                    "place_id": str(node.place_id),
+                    "stay_minutes": node.stay_minutes,
+                    "transport": node.transport.value if node.transport is not None else None,
+                    "note": node.note,
+                    "price_min": node.price_min,
+                    "price_max": node.price_max,
+                }
+                for node in self.repo.list_nodes(draft.id)
+            ],
+        }
+
     # ===== 删除草稿 =====
     def delete(self, *, draft_id: uuid.UUID, owner_id: uuid.UUID) -> None:
         draft = self._load_owned(draft_id=draft_id, owner_id=owner_id)
@@ -358,6 +431,12 @@ class RoutesService:
             raise Conflict(
                 "只有还在编辑中、且从未发布的草稿可以删除",
                 code="DRAFT_NOT_DELETABLE",
+            )
+        if self.repo.has_versions(draft.id):
+            # 冻结过的草稿只能归档：删了草稿会让不可变版本失去来源。
+            raise Conflict(
+                "草稿已冻结过版本，不能删除；请改为归档",
+                code="DRAFT_HAS_VERSIONS",
             )
         self.repo.delete(draft)
 
