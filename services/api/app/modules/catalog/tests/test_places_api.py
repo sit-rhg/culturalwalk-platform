@@ -294,6 +294,7 @@ def test_detail_includes_facts_and_sources(
         place_id,
         claim="书院门前两棵古樟传为朱熹手植",
         confidence=FactConfidence.LIKELY,
+        source={"title": "长沙市志", "url": None, "publisher": "地方志"},
         created_at=BASE_TIME + timedelta(minutes=1),
     )
 
@@ -316,8 +317,38 @@ def test_detail_includes_facts_and_sources(
             "publisher": "中国网",
         }
     ]
-    # 没有出处的说法 sources 为空数组，不是 null
-    assert likely["sources"] == []
+    # 书志类来源没有 URL，序列化成 null 而不是空串
+    assert likely["sources"] == [{"title": "长沙市志", "url": None, "publisher": "地方志"}]
+
+
+def test_detail_hides_facts_without_source(
+    client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    """没有来源的说法不进公开内容（必读1「数据要求」、docs/01 §2.2）。"""
+    place_id = _add_place(session_factory, name="无来源过滤点")
+    _add_fact(
+        session_factory,
+        place_id,
+        claim="有官方来源的说法",
+        confidence=FactConfidence.VERIFIED,
+        source={
+            "title": "长沙市文旅广电局",
+            "url": "http://wlgd.changsha.gov.cn/",
+            "publisher": "长沙市文旅广电局",
+        },
+    )
+    _add_fact(
+        session_factory,
+        place_id,
+        claim="只在内部备忘、还没有出处的说法",
+        confidence=FactConfidence.UNVERIFIED,
+        created_at=BASE_TIME + timedelta(minutes=1),
+    )
+
+    response = client.get(f"{ENDPOINT}/{place_id}")
+
+    assert response.status_code == 200, response.text
+    assert [fact["claim"] for fact in response.json()["facts"]] == ["有官方来源的说法"]
 
 
 def test_detail_timestamps_are_timezone_aware(

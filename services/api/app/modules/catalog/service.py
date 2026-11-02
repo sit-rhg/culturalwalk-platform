@@ -64,7 +64,12 @@ class CatalogService:
 
 
 def _detail_out(place: Place) -> PlaceDetailOut:
-    """事实 → 来源的展开在这里做：契约里 PlaceFact.sources 是数组，库里存的是单条 source_id。"""
+    """事实 → 来源的展开在这里做：契约里 PlaceFact.sources 是数组，库里存的是单条 source_id。
+
+    只回显挂了来源的 fact：必读1「数据要求」与 docs/01 §2.2 都写明
+    「没有来源的 fact 不进公开内容」，所以内部备忘类说法连 sources=[] 都不该出现在这里。
+    """
+    visible_facts = [fact for fact in place.facts if fact.source is not None]
     return PlaceDetailOut(
         id=place.id,
         name=place.name,
@@ -79,9 +84,9 @@ def _detail_out(place: Place) -> PlaceDetailOut:
                 id=fact.id,
                 claim=fact.claim,
                 confidence=str(fact.confidence),
-                sources=[SourceOut.model_validate(fact.source)] if fact.source else [],
+                sources=[SourceOut.model_validate(fact.source)],
             )
-            for fact in place.facts
+            for fact in visible_facts
         ],
         open_hours=place.open_hours,
         open_hours_verified_at=place.open_hours_verified_at,
