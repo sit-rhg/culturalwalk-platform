@@ -1,14 +1,108 @@
 # 路线与版本 · ORM 模型
-"""表结构以 docs/02-数据模型与状态机.md 为准。
+"""表结构以 docs/02-数据模型与状态机.md §2.3 为准。
 
 迁移只由 P3 一人生成：alembic revision --autogenerate -m "<动词>_<对象>"
 """
 
 from __future__ import annotations
 
-# from app.core.db import Base
-# from sqlalchemy.orm import Mapped, mapped_column
-#
-# class Routes(Base):
-#     __tablename__ = "routess"
-#     ...
+import uuid
+from datetime import UTC, datetime
+from enum import StrEnum
+
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    Enum,
+    Integer,
+    String,
+    UniqueConstraint,
+    Uuid,
+)
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.core.db import Base
+
+
+def _utcnow() -> datetime:
+    """时间戳由应用生成，不用数据库的 CURRENT_TIMESTAMP。
+
+    SQLite 的 CURRENT_TIMESTAMP 只精确到秒，而游标分页按 (created_at, id)
+    定位：同一秒创建的多条草稿如果时间被截断，翻页时会整页重复。
+    应用侧时间带微秒，SQLite 与 PG 行为一致。
+    """
+    return datetime.now(UTC)
+
+
+class DraftState(StrEnum):
+    """草稿状态机，见 docs/02 §3.3。
+
+    SUBMITTED_LOCKED / APPROVED_LOCKED 期间作者不能改内容；要改只能 fork
+    出新草稿（RT-03 之后才有的能力）。这里只把状态存下来，流转规则由
+    service 判断——状态机写在模型里，别的地方就永远不知道谁在改状态。
+    """
+
+    EDITING = "EDITING"
+    SUBMITTED_LOCKED = "SUBMITTED_LOCKED"
+    APPROVED_LOCKED = "APPROVED_LOCKED"
+    ARCHIVED = "ARCHIVED"
+
+
+def _enum_values(py_enum: type[StrEnum]) -> list[str]:
+    """落库的是 value（与契约 enum 完全一致），不是 Python 成员名。"""
+    return [member.value for member in py_enum]
+
+
+def _stored_enum(py_enum: type[StrEnum], *, length: int) -> Enum:
+    """枚举一律 VARCHAR + CHECK，不用 PG 原生 ENUM：加状态不用写迁移，SQLite 也能测。"""
+    return Enum(
+        py_enum,
+        native_enum=False,
+        length=length,
+        create_constraint=True,
+        validate_strings=True,
+        values_callable=_enum_values,
+    )
+
+
+class RouteDraft(Base):
+    """一条路线的编辑草稿：发布前的工作区。"""
+
+    __tablename__ = "route_drafts"
+    __table_args__ = (
+        # 幂等（docs/03 §1.2）：同一个作者拿同一个 Idempotency-Key 只能建出一份草稿。
+        # 后到的并发请求会撞这个约束，回滚后重查拿先落库的那份。
+        UniqueConstraint("owner_id", "idempotency_key", name="uq_route_drafts_owner_idempotency"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # users 表属于 identity 模块且尚未建；跨模块只存裸 ID，等 ID-01 落地再补外键。
+    owner_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False, index=True)
+    # 草稿在发布前不属于任何 route；发布（RT-05）时才回填。
+    route_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    title: Mapped[str] = mapped_column(String(60), nullable=False)
+    summary: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    # 契约的 RouteDraft 响应里不暴露主题/时长，但创建时收下了——发布时复制到 route。
+    theme_tags: Mapped[list[str]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list
+    )
+    duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    state: Mapped[DraftState] = mapped_column(
+        _stored_enum(DraftState, length=20), nullable=False, default=DraftState.EDITING
+    )
+    # 乐观锁：每次 PATCH 成功 +1；客户端用 If-Match 带回来，不匹配 412。
+    lock_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    base_version_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    # 幂等（docs/03 §1.2）。POST 用一个 key 建草稿；PATCH 的 key 单独存，
+    # 否则第二次 PATCH 会把创建时的 key 覆盖掉，创建请求重试就查不到原草稿。
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    input_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    patch_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    patch_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False, onupdate=_utcnow
+    )
