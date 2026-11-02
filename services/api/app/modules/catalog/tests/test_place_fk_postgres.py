@@ -55,7 +55,10 @@ def pg_engine() -> Iterator[Engine]:
     if not settings.database_url.startswith("postgresql"):
         pytest.skip("需要 Postgres：当前 DATABASE_URL 不是 postgresql")
 
-    engine = create_engine(settings.database_url, future=True)
+    # connect_timeout 是必须的：没有 Postgres 的机器上，默认的 TCP 连接可能挂到
+    # 操作系统级超时（实测 ~300s/例），十几条 PG 用例就能把本地 pytest 拖成"卡死"。
+    # 2 秒足够本机/CI 建连，连不上就快速 skip。
+    engine = create_engine(settings.database_url, future=True, connect_args={"connect_timeout": 2})
     try:
         with engine.connect() as conn:
             conn.execute(text("select 1"))

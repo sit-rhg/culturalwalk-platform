@@ -48,7 +48,8 @@ def pg_engine() -> Iterator[Engine]:
     if not settings.database_url.startswith("postgresql"):
         pytest.skip("需要 Postgres：当前 DATABASE_URL 不是 postgresql")
 
-    engine = create_engine(settings.database_url, future=True)
+    # 同 test_place_fk_postgres：没装 PG 的机器上不能让 TCP 建连挂到系统级超时。
+    engine = create_engine(settings.database_url, future=True, connect_args={"connect_timeout": 2})
     try:
         with engine.connect() as conn:
             conn.execute(text("select 1"))
