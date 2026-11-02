@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.modules.routes.models import DraftState
+# 节点详情里嵌的是公开 Place 形状。跨模块只借 DTO，不碰 catalog 的 ORM 模型：
+# 数据本身仍通过 CatalogService 读取（模块边界在 service 层）。
+from app.modules.catalog.schemas import PlaceOut
+from app.modules.routes.models import DraftState, TransportMode
 
 
 class RouteDraftCreate(BaseModel):
@@ -80,17 +82,52 @@ class RouteDraftListOut(BaseModel):
     next_cursor: str | None = None
 
 
-class RouteNodeOut(BaseModel):
-    """详情里的节点。
+class RouteNodeInput(BaseModel):
+    """PUT /route-drafts/{id}/nodes 里的一个节点（契约 RouteNodeInput）。
 
-    RT-01 只实现草稿本身，节点表要到 RT-02 才建，所以现在这条永远是空的；
-    place 暂时用 dict 透传，等 catalog 的 Place schema 合入后换成真类型。
+    没有 position 字段：顺序由数组下标决定，服务端重排 1..N。
     """
 
+    model_config = ConfigDict(extra="forbid")
+
+    place_id: uuid.UUID
+    stay_minutes: int = Field(ge=10, le=480)
+    transport: TransportMode | None = None
+    note: str | None = None
+    price_min: int | None = Field(default=None, ge=0)
+    price_max: int | None = Field(default=None, ge=0)
+    # 契约里有这个字段，但媒体模块（ME-02）还没落地：先收下、不落库，
+    # 等 ME-02 定义了 asset 的所有权校验再补列，避免存一堆没人能验证的 ID。
+    media_asset_ids: list[uuid.UUID] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_price_range(self) -> RouteNodeInput:
+        # 下限大于上限说明前端把两个输入框接反了；不要静默交换，
+        # 让用户改对——交换等于替用户猜意图。
+        if (
+            self.price_min is not None
+            and self.price_max is not None
+            and self.price_max < self.price_min
+        ):
+            raise ValueError("price_max 不能小于 price_min")
+        return self
+
+
+class RouteNodesReplace(BaseModel):
+    """PUT /route-drafts/{id}/nodes 的请求体：整表替换。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    nodes: list[RouteNodeInput]
+
+
+class RouteNodeOut(BaseModel):
+    """详情里的节点：place 是公开 Place 形状（含 status，便于前端提示已下线）。"""
+
     position: int
-    place: dict[str, Any]
+    place: PlaceOut
     stay_minutes: int
-    transport: str
+    transport: TransportMode | None = None
     note: str | None = None
     price_min: int | None = None
     price_max: int | None = None

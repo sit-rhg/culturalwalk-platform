@@ -7,11 +7,11 @@ import uuid
 from datetime import datetime
 from typing import Any, cast
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
-from app.modules.routes.models import RouteDraft
+from app.modules.routes.models import RouteDraft, RouteNode
 
 
 class RoutesRepository:
@@ -83,4 +83,21 @@ class RoutesRepository:
 
     def delete(self, draft: RouteDraft) -> None:
         self.db.delete(draft)
+        self.db.flush()
+
+    # ===== 节点 =====
+    def list_nodes(self, draft_id: uuid.UUID) -> list[RouteNode]:
+        """按 position 升序；(draft_id, position) 有联合索引，过滤和排序一次走完。"""
+        stmt = select(RouteNode).where(RouteNode.draft_id == draft_id).order_by(RouteNode.position)
+        return list(self.db.scalars(stmt))
+
+    def replace_nodes(self, draft_id: uuid.UUID, nodes: list[RouteNode]) -> None:
+        """整表替换：先删后插。
+
+        不用逐条 diff：顺序本身就是客户端提交的完整语义，diff 出来的中间状态
+        （比如两条互换）反而要处理 position 撞车。一次 DELETE + 一批 INSERT
+        在同一个事务里，读到的要么是旧顺序、要么是新顺序。
+        """
+        self.db.execute(delete(RouteNode).where(RouteNode.draft_id == draft_id))
+        self.db.add_all(nodes)
         self.db.flush()

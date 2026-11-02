@@ -12,15 +12,18 @@ from enum import StrEnum
 
 from sqlalchemy import (
     JSON,
+    CheckConstraint,
     DateTime,
     Enum,
+    ForeignKey,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     Uuid,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
 
@@ -100,9 +103,87 @@ class RouteDraft(Base):
     input_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     patch_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     patch_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # PUT /{id}/nodes 的幂等键单独一列：它和 PATCH 是两类写操作，
+    # 混用同一列会让「先 PATCH 再 PUT」的重放判断互相覆盖。
+    nodes_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    nodes_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False, onupdate=_utcnow
     )
+
+    # 节点按 position 升序读；删除草稿时级联删节点（DB 上也有 ON DELETE CASCADE）。
+    nodes: Mapped[list[RouteNode]] = relationship(
+        back_populates="draft",
+        cascade="all, delete-orphan",
+        order_by="RouteNode.position",
+        passive_deletes=True,
+    )
+
+
+class TransportMode(StrEnum):
+    """节点之间的交通方式，取值与 openapi 的 RouteNodeInput.transport 一致。"""
+
+    WALK = "walk"
+    METRO = "metro"
+    BUS = "bus"
+    TAXI = "taxi"
+    BIKE = "bike"
+
+
+class RouteNode(Base):
+    """草稿里的一个停靠点。
+
+    整表替换语义（PUT /route-drafts/{id}/nodes）：客户端每次提交完整顺序，
+    服务端按数组下标重排 1..N。这样「调整顺序」不需要额外的 move 接口，
+    也不会出现移动过程中 position 唯一约束互相打架的问题。
+    """
+
+    __tablename__ = "route_nodes"
+    __table_args__ = (
+        # 同一草稿里位置唯一：整表替换保证写进来的 1..N 不重复，
+        # 这条约束用来兜住「有人绕过 replace_nodes 直接插行」的 bug。
+        # 它建的 (draft_id, position) 索引同时覆盖详情查询的过滤与排序，
+        # 不再单独建一个重复索引（写放大没有收益）。
+        UniqueConstraint("draft_id", "position", name="uq_route_nodes_draft_position"),
+        CheckConstraint("position >= 1", name="ck_route_nodes_position"),
+        # 与契约 RouteNodeInput.stay_minutes 的 10..480 对齐：应用层校验之外再兜一层，
+        # 免得绕过 API 的脚本写进一个「停留 0 分钟」的节点。
+        CheckConstraint(
+            "stay_minutes >= 10 AND stay_minutes <= 480",
+            name="ck_route_nodes_stay_minutes",
+        ),
+        CheckConstraint("price_min IS NULL OR price_min >= 0", name="ck_route_nodes_price_min"),
+        CheckConstraint("price_max IS NULL OR price_max >= 0", name="ck_route_nodes_price_max"),
+        CheckConstraint(
+            "price_min IS NULL OR price_max IS NULL OR price_max >= price_min",
+            name="ck_route_nodes_price_range",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    draft_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("route_drafts.id", ondelete="CASCADE"), nullable=False
+    )
+    # 地点属于 catalog 模块：跨模块只存裸 ID，不建物理外键（docs/02 §1）。
+    # 存在性/是否已发布由 catalog 的 service 在写入前校验。
+    place_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    # 1 起连续；由服务端按提交数组的下标重排，客户端不能自己指定。
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    stay_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    transport: Mapped[TransportMode | None] = mapped_column(
+        _stored_enum(TransportMode, length=12), nullable=True
+    )
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    price_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    price_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False, onupdate=_utcnow
+    )
+
+    draft: Mapped[RouteDraft] = relationship(back_populates="nodes")
