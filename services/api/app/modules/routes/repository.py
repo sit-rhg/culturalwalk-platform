@@ -7,11 +7,11 @@ import uuid
 from datetime import datetime
 from typing import Any, cast
 
-from sqlalchemy import and_, delete, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
-from app.modules.routes.models import RouteDraft, RouteNode
+from app.modules.routes.models import RouteDraft, RouteNode, RouteVersion
 
 
 class RoutesRepository:
@@ -101,3 +101,20 @@ class RoutesRepository:
         self.db.execute(delete(RouteNode).where(RouteNode.draft_id == draft_id))
         self.db.add_all(nodes)
         self.db.flush()
+
+    # ===== 版本 =====
+    def has_versions(self, draft_id: uuid.UUID) -> bool:
+        """草稿是否冻结过版本：冻结过的草稿不能物理删除（版本不可变、无孤儿）。"""
+        stmt = select(RouteVersion.id).where(RouteVersion.draft_id == draft_id).limit(1)
+        return self.db.scalars(stmt).first() is not None
+
+    def next_version_no(self, draft_id: uuid.UUID) -> int:
+        """下一个版本号。并发冻结会拿到同一个号，由唯一约束兜底后重算。"""
+        stmt = select(func.max(RouteVersion.version_no)).where(RouteVersion.draft_id == draft_id)
+        current = self.db.scalar(stmt)
+        return (current or 0) + 1
+
+    def add_version(self, version: RouteVersion) -> RouteVersion:
+        self.db.add(version)
+        self.db.flush()
+        return version
