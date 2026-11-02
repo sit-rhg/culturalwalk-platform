@@ -155,20 +155,20 @@ class IdentityService:
         self.repo.revoke(session, now)
         return self._issue(user)
 
-    def logout(self, *, user_id: uuid.UUID, refresh_token: str | None = None) -> int:
-        """退出登录：撤销本次会话（给了 refresh_token）或该用户全部未撤销会话。
+    def logout(self, *, user_id: uuid.UUID, session_id: uuid.UUID | None = None) -> int:
+        """退出登录：按 access 令牌里的 sid 撤销**本次**会话。
 
+        契约的 /auth/logout 没有请求体，所以定位会话只能靠 access 令牌自带的 sid；
+        没有 sid 的老令牌退回"撤销该用户全部未撤销会话"，响应仍是 204。
+        会话不存在或不属于本人时返回 0 且不报错：退出是幂等的，重复调用仍 204。
         返回被撤销的会话数，给测试和审计留个可断言的返回值。
         """
         now = utcnow()
-        if refresh_token is None:
+        if session_id is None:
             return self.repo.revoke_all_for_user(user_id, now)
-        token_user_id, session_id = decode_refresh_token(refresh_token)
-        if token_user_id != user_id:
-            raise Unauthorized("登录已失效，请重新登录")
         session = self.repo.get_session(session_id)
-        if session is None:
-            raise Unauthorized("登录已失效，请重新登录")
+        if session is None or session.user_id != user_id:
+            return 0
         if session.revoked_at is None:
             self.repo.revoke(session, now)
         return 1
@@ -203,7 +203,10 @@ class IdentityService:
         return IssuedTokens(
             user=user,
             access_token=create_access_token(
-                user_id=str(user.id), username=user.username, role=user.role
+                user_id=str(user.id),
+                username=user.username,
+                role=user.role,
+                session_id=str(session_id),
             ),
             refresh_token=refresh_token,
             expires_in=settings.access_token_ttl_seconds,

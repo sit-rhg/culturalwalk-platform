@@ -74,6 +74,25 @@ def test_register_short_password_is_validation_error(client: TestClient) -> None
     assert resp.json()["error"]["code"] == "VALIDATION_FAILED"
 
 
+def test_register_invalid_email_is_validation_error(client: TestClient) -> None:
+    """契约的 format: email 由 EmailStr 判，非法格式走 422 而不是 500。"""
+    resp = client.post(
+        REGISTER, json={"username": "ming", "password": PASSWORD, "email": "not-an-email"}
+    )
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["error"]["code"] == "VALIDATION_FAILED"
+
+
+def test_register_accepts_valid_email(client: TestClient) -> None:
+    resp = client.post(
+        REGISTER,
+        json={"username": "ming", "password": PASSWORD, "email": "Ming@Example.COM"},
+    )
+
+    assert resp.status_code == 201, resp.text
+
+
 def test_login_with_wrong_password_is_unauthorized(client: TestClient) -> None:
     _register(client, username="ming")
     resp = client.post(LOGIN, json={"username": "ming", "password": "wrong-password"})
@@ -110,18 +129,48 @@ def test_refresh_issues_new_pair_and_drops_the_old_token(client: TestClient) -> 
     assert again.json()["error"]["code"] == "UNAUTHORIZED"
 
 
-def test_logout_revokes_session_so_old_refresh_fails(client: TestClient) -> None:
+def test_logout_needs_no_body_and_revokes_current_session(client: TestClient) -> None:
+    """契约的 /auth/logout 没有请求体：只凭 access 令牌里的 sid 定位该退哪一次会话。"""
     tokens = _register(client, username="ming")
-    resp = client.post(
-        LOGOUT,
-        json={"refresh_token": tokens["refresh_token"]},
-        headers=_bearer(tokens["access_token"]),
-    )
+    resp = client.post(LOGOUT, headers=_bearer(tokens["access_token"]))
     assert resp.status_code == 204, resp.text
 
     again = client.post(REFRESH, json={"refresh_token": tokens["refresh_token"]})
     assert again.status_code == 401, again.text
     assert again.json()["error"]["code"] == "UNAUTHORIZED"
+
+
+def test_logout_frees_only_the_current_session(client: TestClient) -> None:
+    """两台设备各登录一次：退掉一台，另一台的 refresh 仍能换令牌。"""
+    phone = _register(client, username="ming")
+    pad = client.post(LOGIN, json={"username": "ming", "password": PASSWORD}).json()
+    assert pad["refresh_token"] != phone["refresh_token"]
+
+    resp = client.post(LOGOUT, headers=_bearer(phone["access_token"]))
+    assert resp.status_code == 204, resp.text
+
+    gone = client.post(REFRESH, json={"refresh_token": phone["refresh_token"]})
+    assert gone.status_code == 401, gone.text
+    alive = client.post(REFRESH, json={"refresh_token": pad["refresh_token"]})
+    assert alive.status_code == 200, alive.text
+
+
+def test_logout_is_idempotent(client: TestClient) -> None:
+    """重复退出仍是 204，不因为会话已撤销就翻脸。"""
+    tokens = _register(client, username="ming")
+    for _ in range(2):
+        resp = client.post(LOGOUT, headers=_bearer(tokens["access_token"]))
+        assert resp.status_code == 204, resp.text
+
+
+def test_logout_without_sid_revokes_every_session(client: TestClient) -> None:
+    """老令牌没有 sid 时退回"撤销全部会话"，响应语义不变。"""
+    tokens = _register(client, username="ming")
+    legacy = create_access_token(user_id=tokens["user"]["id"], username="ming", role="user")
+
+    assert client.post(LOGOUT, headers=_bearer(legacy)).status_code == 204
+    gone = client.post(REFRESH, json={"refresh_token": tokens["refresh_token"]})
+    assert gone.status_code == 401, gone.text
 
 
 def test_logout_without_token_is_unauthorized(client: TestClient) -> None:

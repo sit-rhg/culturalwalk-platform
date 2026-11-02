@@ -20,12 +20,17 @@ class CurrentUser:
     id: str
     username: str
     role: str  # user | editor | admin
+    # access 令牌里的 session id（老令牌可能没有）。契约的 /auth/logout 没有请求体，
+    # 这个声明就是"该退哪一次会话"的唯一线索。
+    session_id: str | None = None
 
     def is_admin(self) -> bool:
         return self.role in {"admin", "editor"}
 
 
-def create_access_token(*, user_id: str, username: str, role: str) -> str:
+def create_access_token(
+    *, user_id: str, username: str, role: str, session_id: str | None = None
+) -> str:
     import time
 
     payload = {
@@ -35,6 +40,8 @@ def create_access_token(*, user_id: str, username: str, role: str) -> str:
         "exp": int(time.time()) + settings.access_token_ttl_seconds,
         "typ": "access",
     }
+    if session_id is not None:
+        payload["sid"] = session_id
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_alg)
 
 
@@ -54,7 +61,12 @@ def _user_from_auth_header(authorization: str | None) -> CurrentUser | None:
     payload = decode_token(token)
     if payload.get("typ") != "access":
         raise Unauthorized("令牌类型错误")
-    return CurrentUser(id=payload["sub"], username=payload["username"], role=payload["role"])
+    return CurrentUser(
+        id=payload["sub"],
+        username=payload["username"],
+        role=payload["role"],
+        session_id=payload.get("sid"),
+    )
 
 
 def optional_user(
