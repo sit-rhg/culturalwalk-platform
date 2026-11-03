@@ -59,6 +59,16 @@ class PreconditionFailed(AppError):
     code = "PRECONDITION_FAILED"
 
 
+class ServiceUnavailable(AppError):
+    """依赖的模块或外部服务暂时不可用。
+
+    不用 500（前端会以为是自己的错，也不会重试），也不用 409（那暗示"再试也一样"）；
+    503 才准确表达"过一会儿再来"。
+    """
+
+    http_status = 503
+
+
 class ValidationFailed(AppError):
     http_status = 422
     code = "VALIDATION_FAILED"

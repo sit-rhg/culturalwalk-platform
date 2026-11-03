@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Iterator, Sequence
 
@@ -22,7 +23,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.db import Base, get_db
 from app.core.deps import create_access_token
-from app.core.errors import Conflict, Forbidden, NotFound
+from app.core.errors import Conflict, Forbidden, NotFound, ServiceUnavailable
 from app.main import create_app
 from app.modules.planner import service as planner_service
 from app.modules.planner.draft import (
@@ -180,6 +181,17 @@ def test_title_uses_city_and_days(db: Session) -> None:
     assert draft_title(_plan(db, days=3)) == "长沙 3 天文化路线"
 
 
+def test_title_keeps_suffix_when_city_is_long(db: Session) -> None:
+    """城市名超长时只砍城市，后缀整段保留（否则「文化路线」会变成「文化」）。"""
+    itinerary = _plan(db, days=3)
+    itinerary.city = "长" * 80
+
+    title = draft_title(itinerary)
+
+    assert len(title) <= 60
+    assert title.endswith(" 3 天文化路线")
+
+
 def test_title_is_cut_to_contract_length(db: Session) -> None:
     itinerary = _plan(db)
     itinerary.city = "长" * 80
@@ -251,9 +263,25 @@ def test_summary_counts_pending_prices(db: Session) -> None:
 
 def test_idempotency_key_is_derived_from_plan() -> None:
     plan_id = uuid.uuid4()
-    assert routes_idempotency_key(plan_id) == routes_idempotency_key(plan_id)
-    assert routes_idempotency_key(plan_id).endswith(str(plan_id))
-    assert len(routes_idempotency_key(plan_id)) <= 64
+    plain = routes_idempotency_key(plan_id)
+    assert plain == routes_idempotency_key(plan_id)
+    assert plain.endswith(str(plan_id))
+    assert len(plain) <= 64
+
+
+def test_idempotency_key_follows_content_changes() -> None:
+    """内容变了必须换 key。
+
+    否则 routes 会把它当成「同 key 不同内容」报 409，用户改完方案就再也转不了草稿。
+    """
+    plan_id = uuid.uuid4()
+    first = routes_idempotency_key(plan_id, "a" * 64)
+    second = routes_idempotency_key(plan_id, "b" * 64)
+
+    assert first != second
+    assert first == routes_idempotency_key(plan_id, "a" * 64), "同一份内容必须稳定"
+    assert first.startswith(routes_idempotency_key(plan_id))
+    assert len(first) <= 64
 
 
 # ---------------------------------------------------------------- service 层
@@ -270,7 +298,7 @@ def test_to_draft_creates_draft_with_ordered_nodes(db: Session) -> None:
     assert draft_id == port.draft_id
     owner_id, spec, key = port.created[0]
     assert owner_id == itinerary.user_id
-    assert key == routes_idempotency_key(itinerary.id)
+    assert key == routes_idempotency_key(itinerary.id, itinerary.input_hash)
     assert [node.stay_minutes for node in spec.nodes] == [120, 90, 45], "顺序必须原样"
     assert spec.nodes[2].source_ids == ("fact-1", "fact-2")
 
@@ -460,16 +488,17 @@ class _StubRoutesService:
         self.db = db
 
 
-def test_port_reports_conflict_when_routes_service_has_no_create(
+def test_port_reports_503_when_routes_service_has_no_create(
     db: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """routes 侧没提供 create 时，必须报 409 ROUTES_UNAVAILABLE，而不是 500。
+    """routes 侧没提供 create 时报 503 ROUTES_UNAVAILABLE。
 
-    用桩替换 service 来复现"能力缺失"，不依赖当前分支上 routes 实现了多少。
+    500 会让前端以为请求写错了、且不敢重试；409 又暗示"再试也一样"。
+    503 才是"对方还没就绪，过会儿再来"。
     """
     monkeypatch.setattr(RoutesDraftPort, "_service", lambda self: _StubRoutesService(self.db))
 
-    with pytest.raises(Conflict) as excinfo:
+    with pytest.raises(ServiceUnavailable) as excinfo:
         RoutesDraftPort(db).create(
             owner_id=uuid.uuid4(),
             spec=DraftSpec(
@@ -482,20 +511,27 @@ def test_port_reports_conflict_when_routes_service_has_no_create(
             idempotency_key="plan:x",
         )
     assert excinfo.value.code == "ROUTES_UNAVAILABLE"
+    assert excinfo.value.http_status == 503
 
 
-def test_port_silently_skips_nodes_when_routes_cannot_write_them(
-    db: Session, monkeypatch: pytest.MonkeyPatch
+def test_port_warns_when_routes_cannot_write_nodes(
+    db: Session, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """routes 还没提供 replace_nodes 时静默跳过，不能让整次转草稿失败。"""
+    """routes 还没提供 replace_nodes 时不能整次失败，但也不能一声不吭。
+
+    草稿建好了、节点没写进去，事后一定有人问"为什么草稿是空的"——日志要能回答。
+    """
     monkeypatch.setattr(RoutesDraftPort, "_service", lambda self: _StubRoutesService(self.db))
 
-    RoutesDraftPort(db).replace_nodes(
-        draft_id=uuid.uuid4(),
-        owner_id=uuid.uuid4(),
-        nodes=(DraftNode(place_id=uuid.uuid4(), stay_minutes=30),),
-        idempotency_key="plan:x:nodes",
-    )
+    with caplog.at_level(logging.WARNING, logger="app.modules.planner.draft"):
+        RoutesDraftPort(db).replace_nodes(
+            draft_id=uuid.uuid4(),
+            owner_id=uuid.uuid4(),
+            nodes=(DraftNode(place_id=uuid.uuid4(), stay_minutes=30),),
+            idempotency_key="plan:x:nodes",
+        )
+
+    assert any("replace_nodes" in record.getMessage() for record in caplog.records)
 
 
 def test_real_port_creates_a_real_draft(db: Session) -> None:
@@ -525,3 +561,85 @@ def test_real_port_creates_a_real_draft(db: Session) -> None:
         idempotency_key="plan:x:real",
     )
     assert isinstance(draft_id, uuid.UUID)
+
+
+# ---------------------------------------------------------------- 真实 routes 链路
+
+
+def _user(db: Session, username: str) -> uuid.UUID:
+    from app.modules.identity.models import ROLE_USER, STATUS_ACTIVE, User
+    from app.modules.identity.service import hash_password
+
+    user = User(
+        id=uuid.uuid4(),
+        username=username,
+        password_hash=hash_password("password123"),
+        role=ROLE_USER,
+        status=STATUS_ACTIVE,
+    )
+    db.add(user)
+    db.flush()
+    return user.id
+
+
+def _place(db: Session, name: str) -> uuid.UUID:
+    from decimal import Decimal
+
+    from app.modules.catalog.models import Place, PlaceStatus
+
+    place = Place(
+        name=name,
+        lat=Decimal("28.190000"),
+        lon=Decimal("112.940000"),
+        district="岳麓区",
+        culture_tags=["历史"],
+        status=PlaceStatus.VERIFIED,
+    )
+    db.add(place)
+    db.flush()
+    return place.id
+
+
+def test_real_port_writes_nodes_in_plan_order(db: Session) -> None:
+    """回归：RT-02 合入后，真实 port 必须把节点按行程顺序写进草稿。
+
+    RT-02 的 replace_nodes 要 payload + if_match，只探测"方法在不在"是不够的
+    （曾经的写法用 nodes= 传参，线上会 TypeError 变成 500，这条用例就是钉它的）。
+    """
+    from app.modules.routes.service import RoutesService
+
+    owner_id = _user(db, "to-draft-e2e")
+    first, second, third = _place(db, "岳麓山"), _place(db, "橘子洲"), _place(db, "太平老街")
+
+    itinerary = _plan(db, user_id=owner_id)
+    day1, day2 = _day(db, itinerary, 1), _day(db, itinerary, 2)
+    _item(db, day1, order=1, place_id=first, stay=120, price=(6000, 6000))
+    # 故意先插第 2 天的"第 2 站"，再插"第 1 站"：顺序必须由 day_index/order 决定
+    _item(db, day2, order=2, place_id=third, stay=45, transport="walk")
+    _item(db, day2, order=1, place_id=second, stay=90)
+    db.flush()
+
+    draft_id = PlannerService(db).to_draft(
+        user_id=owner_id, plan_id=itinerary.id, idempotency_key="idem-real-01"
+    )
+
+    detail = RoutesService(db).get_detail(draft_id=draft_id, owner_id=owner_id)
+    assert [node.position for node in detail.nodes] == [1, 2, 3]
+    assert [node.place.id for node in detail.nodes] == [first, second, third], "顺序不能重排"
+    assert detail.nodes[0].price_min == 6000
+    assert detail.nodes[1].transport == "metro"
+
+
+def test_real_port_is_idempotent_per_plan(db: Session) -> None:
+    """同一张行程点两次「生成草稿」，不能多出一份重复草稿。"""
+    owner_id = _user(db, "to-draft-idem")
+    place = _place(db, "天心阁")
+    itinerary = _plan(db, user_id=owner_id)
+    _item(db, _day(db, itinerary, 1), order=1, place_id=place)
+    db.flush()
+
+    service = PlannerService(db)
+    first = service.to_draft(user_id=owner_id, plan_id=itinerary.id, idempotency_key="idem-a")
+    second = service.to_draft(user_id=owner_id, plan_id=itinerary.id, idempotency_key="idem-b")
+
+    assert first == second
