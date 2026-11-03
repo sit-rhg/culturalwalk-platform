@@ -7,15 +7,14 @@
 
 from __future__ import annotations
 
-import base64
-import json
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.core.errors import AppError, NotFound, ValidationFailed
+from app.core.errors import NotFound, ValidationFailed
+from app.core.pagination import decode_cursor, encode_cursor
 from app.modules.audit import service as audit
 from app.modules.notifications.models import Notification
 from app.modules.notifications.repository import NotificationsRepository
@@ -30,23 +29,6 @@ REVIEW_REJECTED = "review_rejected"
 
 # 退回类通知必须带理由（验收条件：退回通知带理由）
 REJECT_TYPES = frozenset({REVIEW_REQUEST_CHANGES, REVIEW_REJECTED})
-
-
-def encode_cursor(created_at: datetime, notification_id: uuid.UUID) -> str:
-    """游标对前端不透明，内部就是「上一页最后一条」的位置。"""
-    raw = json.dumps(
-        {"c": created_at.isoformat(), "i": str(notification_id)}, separators=(",", ":")
-    )
-    return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
-
-
-def decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
-    padded = cursor + "=" * (-len(cursor) % 4)
-    try:
-        data = json.loads(base64.urlsafe_b64decode(padded))
-        return datetime.fromisoformat(data["c"]), uuid.UUID(data["i"])
-    except (KeyError, TypeError, ValueError) as exc:  # base64 错、JSON 错、时间/ID 格式错
-        raise AppError("分页游标无效", code="INVALID_CURSOR") from exc
 
 
 class NotificationsService:

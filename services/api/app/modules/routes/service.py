@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.costing import summarize_cost
 from app.core.errors import Conflict, Forbidden, NotFound, PreconditionFailed, ValidationFailed
 from app.core.pagination import decode_cursor, encode_cursor
 from app.modules.catalog.schemas import PlaceOut
@@ -539,11 +540,11 @@ def _cost_of(nodes: list[RouteNodeOut]) -> CostSummaryOut:
     """按已知价格求和；缺任一端的价格算 unknown，而不是按 0 计入总额。
 
     把缺失当 0 会让「预算 300」的路线看起来比实际便宜，所以单独计数，
-    前端可以提示「还有 N 站未填价格」。
+    前端可以提示「还有 N 站未填价格」。口径与 community 的公开路线共用 core.costing。
     """
-    unknown = sum(1 for node in nodes if node.price_min is None or node.price_max is None)
+    totals = summarize_cost((node.price_min, node.price_max) for node in nodes)
     return CostSummaryOut(
-        min_total=sum(node.price_min for node in nodes if node.price_min is not None),
-        max_total=sum(node.price_max for node in nodes if node.price_max is not None),
-        unknown_count=unknown,
+        min_total=totals.min_total,
+        max_total=totals.max_total,
+        unknown_count=totals.unknown_count,
     )
