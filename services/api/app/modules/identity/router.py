@@ -97,7 +97,13 @@ def me(user: CurrentUserDep, db: DbDep) -> UserOut:
     return UserOut.model_validate(IdentityService(db).require_active_user(_user_id_of(user)))
 
 
-@users_router.get("/{user_id}/profile", response_model=UserProfileOut, summary="用户公开主页")
+@users_router.get(
+    "/{user_id}/profile",
+    response_model=UserProfileOut,
+    # 契约里这些可选字段都不是 nullable：拿不到值就整个不出现，别回 null
+    response_model_exclude_none=True,
+    summary="用户公开主页",
+)
 def profile(user_id: uuid.UUID, db: DbDep) -> UserProfileOut:
-    # 契约里这个端点是 security: []：公开主页，不挂 CurrentUserDep，匿名也能看。
+    # 契约写的是 security: []，所以这里一个令牌依赖都不挂：匿名也要能看。
     return IdentityService(db).profile(user_id)
