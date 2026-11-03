@@ -17,8 +17,9 @@ from app.modules.identity.models import User
 
 # ⚠️ 已知的跨模块 import models，AGENTS.md 原则上禁止；这里是唯一一处，理由与 community 相同：
 # routes 没有「按作者列已发布路线」的公开读服务，而 /users/{id}/profile 必须返回
-# published_routes。契约与社区列表都按「route_versions.route_id 非空 = 已发布」判定，
-# 这里只读 routes 的两张表（不改任何数据）；等 routes 提供公开读服务后换成 service 调用。
+# published_routes。这里只读 moderation/publications 与 routes 的两张表（不写任何数据）；
+# 等 routes 提供公开读服务后换成 service 调用。
+from app.modules.moderation.models import Publication, PublicationState
 from app.modules.routes.models import RouteDraft, RouteVersion
 
 
@@ -48,29 +49,37 @@ class IdentityRepository:
         return self.db.get(User, user_id)
 
     def published_routes(self, *, owner_id: uuid.UUID) -> list[PublishedRoute]:
-        """某作者已发布的路线，每条只取最新版本，按发布时间倒序。
+        """某作者「当前处于发布态」的路线，每条只取最新版本，按发布时间倒序。
 
-        发布时 route_id 会回填到该草稿已有的所有版本上，所以同一 route 会有多行；
-        先按时间倒序扫一遍，每个 route 第一次出现的就是最新版本。
+        「已发布」以 publications.state = PUBLISHED 为准，**不能**用
+        route_versions.route_id 非空代替：发布时回填的 route_id 在下线（unpublish
+        只改 publications.state）之后不会清空，按 route_id 判断会让已下线的路线
+        继续挂在公开主页上。
+
+        同一 route 可能有多次发布记录（下线再发），先按发布时间倒序扫一遍，
+        每个 route 第一次出现的那版就是当前对外展示的版本。
         """
         stmt = (
-            select(RouteVersion, RouteDraft.title)
+            select(Publication.route_id, RouteVersion, RouteDraft.title)
+            .join(RouteVersion, RouteVersion.id == Publication.version_id)
             .join(RouteDraft, RouteDraft.id == RouteVersion.draft_id)
             .where(
-                RouteVersion.route_id.is_not(None),
+                Publication.state == PublicationState.PUBLISHED,
                 RouteDraft.owner_id == owner_id,
             )
-            .order_by(RouteVersion.created_at.desc(), RouteVersion.id.desc())
+            .order_by(
+                Publication.published_at.desc().nulls_last(),
+                RouteVersion.created_at.desc(),
+                RouteVersion.id.desc(),
+            )
         )
         latest: dict[uuid.UUID, PublishedRoute] = {}
-        for version, draft_title in self.db.execute(stmt):
-            if version.route_id is None:  # where 已过滤，仅让类型收敛
-                continue
+        for route_id, version, draft_title in self.db.execute(stmt):
             snapshot = version.snapshot if isinstance(version.snapshot, dict) else {}
             latest.setdefault(
-                version.route_id,
+                route_id,
                 PublishedRoute(
-                    route_id=version.route_id,
+                    route_id=route_id,
                     draft_title=draft_title,
                     snapshot=snapshot,
                 ),
