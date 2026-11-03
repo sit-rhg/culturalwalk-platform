@@ -224,3 +224,28 @@ def test_share_token_is_unique() -> None:
         if isinstance(constraint, UniqueConstraint)
     }
     assert ("share_token",) in uniques
+
+
+def test_agent_step_index_matches_migration() -> None:
+    """模型与迁移的 server_default 必须一致，否则 `alembic check` 常红。
+
+    0009_planner 在库里给 agent_steps.step_index 留了 server_default=0；
+    模型这边如果只写 Python 侧 default=0，autogenerate 会判成需要
+    `modify_default`（去掉库上的默认值），于是每次 alembic check 都报漂移，
+    真正的新漂移被这条噪音淹掉。两边都声明，才算真的对齐。
+    """
+    from pathlib import Path
+
+    column = AgentStep.__table__.c.step_index
+    assert column.server_default is not None, "模型要声明 server_default=0"
+    assert str(column.server_default.arg) == "0"
+
+    migration = (
+        Path(__file__).resolve().parents[4]
+        / "migrations"
+        / "versions"
+        / "0009_planner_plan_jobs_step_index.py"
+    )
+    source = migration.read_text(encoding="utf-8")
+    line = next(ln for ln in source.splitlines() if '"step_index"' in ln and "sa.Column(" in ln)
+    assert "server_default" in line, "迁移那边也要留着 server_default，别在后续迁移里悄悄去掉"
