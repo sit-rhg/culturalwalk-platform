@@ -8,7 +8,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.modules.media.models import MediaAsset
+from app.modules.media.models import MediaAsset, MediaZone, ScanState
 
 
 class MediaRepository:
@@ -32,3 +32,20 @@ class MediaRepository:
             MediaAsset.idempotency_key == idempotency_key,
         )
         return self.db.scalar(stmt)
+
+    def list_scanning(self, limit: int) -> list[MediaAsset]:
+        """待扫描队列：已确认上传（scanning）且仍在隔离区的资产，先到先扫。
+
+        按 (created_at, id) 排序而不是只按 created_at：SQLite 的时间戳可能同秒，
+        只按时间会让多次轮询拿到的顺序不稳定。
+        """
+        stmt = (
+            select(MediaAsset)
+            .where(
+                MediaAsset.scan_state == ScanState.SCANNING,
+                MediaAsset.zone == MediaZone.QUARANTINE,
+            )
+            .order_by(MediaAsset.created_at.asc(), MediaAsset.id.asc())
+            .limit(limit)
+        )
+        return list(self.db.scalars(stmt))

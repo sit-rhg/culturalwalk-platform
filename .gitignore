@@ -61,9 +61,5 @@ pip-metadata-*/
 pip-modern-metadata-*/
 pip-unpack-*/
 pip-*/
-
-# 本地临时文件（API 调试、日志、令牌头）：一律不进库
-_auth.h
-_tok.txt
-_*.json
-_*.log
+.tmp/
+var/

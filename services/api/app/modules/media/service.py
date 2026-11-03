@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import uuid
 from datetime import UTC, datetime
@@ -26,8 +27,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.deps import CurrentUser
-from app.core.errors import Conflict, Forbidden, NotFound, Unauthorized
+from app.core.errors import AppError, Conflict, Forbidden, NotFound, Unauthorized
 from app.modules.audit import service as audit
+from app.modules.media.adapters.objects import ObjectNotFound, ObjectStore
 from app.modules.media.adapters.storage import (
     StorageSigner,
     default_upload_expiry,
@@ -35,6 +37,7 @@ from app.modules.media.adapters.storage import (
 )
 from app.modules.media.models import MediaAsset, MediaZone, ScanState, utcnow
 from app.modules.media.repository import MediaRepository
+from app.modules.media.scan import ScanRejected, scan_image, suffix_for
 from app.modules.media.schemas import MediaAssetOut, MediaIntentIn, MediaIntentOut
 
 # 能看别人媒体的角色（编辑端排障）；普通用户只能看自己上传的。
@@ -208,6 +211,106 @@ class MediaService:
             request_id=request_id,
         )
         return self._asset_out(asset)
+
+    def mark_rejected(
+        self,
+        media_id: uuid.UUID,
+        *,
+        code: str,
+        detail: str,
+        request_id: str | None = None,
+    ) -> MediaAssetOut:
+        """扫描不通过：scanning -> rejected（终态，只能重新申请上传）。
+
+        重复标记是幂等的；已 clean 的资产不允许再标 rejected —— 那多半是扫描器的
+        bug，静默改状态会让已经发布的图片突然消失。
+        """
+        asset = self.repo.get(media_id)
+        if asset is None:
+            raise NotFound("媒体不存在", code="MEDIA_NOT_FOUND")
+        if asset.scan_state is ScanState.CLEAN:
+            raise Conflict("已通过扫描的媒体不能改为拒绝", code="MEDIA_ALREADY_CLEAN")
+        if asset.scan_state is ScanState.REJECTED:
+            return self._asset_out(asset)
+        asset.scan_state = ScanState.REJECTED
+        audit.write(
+            self.db,
+            action="media.scan.rejected",
+            object_type="media_asset",
+            object_id=str(asset.id),
+            after_hash=audit.AuditService.digest(
+                {"scan_state": ScanState.REJECTED.value, "code": code, "detail": detail}
+            ),
+            request_id=request_id,
+        )
+        return self._asset_out(asset)
+
+    def scan_asset(
+        self,
+        media_id: uuid.UUID,
+        *,
+        store: ObjectStore,
+        request_id: str | None = None,
+    ) -> MediaAssetOut:
+        """扫描一个资产：读原件 → 校验/重编码 → 写 clean 副本与缩略图 → mark_clean()。
+
+        为什么要换 key：quarantine 与 clean 必须是两个前缀（开发范式 §11.1.1），
+        对外 URL 只能指向 clean 里的对象；重编码后的字节才是被发布的那一份。
+        """
+        asset = self.repo.get(media_id)
+        if asset is None:
+            raise NotFound("媒体不存在", code="MEDIA_NOT_FOUND")
+        if asset.scan_state in (ScanState.CLEAN, ScanState.REJECTED):
+            return self._asset_out(asset)
+        if asset.scan_state is not ScanState.SCANNING:
+            raise Conflict("文件尚未确认上传", code="MEDIA_NOT_UPLOADED")
+
+        try:
+            raw = store.get(asset.object_key)
+        except ObjectNotFound as exc:
+            raise Conflict(
+                "对象存储里找不到该文件，请重新上传", code="MEDIA_OBJECT_MISSING"
+            ) from exc
+
+        try:
+            outcome = scan_image(raw, asset.mime)
+        except ScanRejected as rejected:
+            return self.mark_rejected(
+                asset.id, code=rejected.code, detail=rejected.detail, request_id=request_id
+            )
+
+        name = asset.object_key.rsplit("/", 1)[-1].rsplit(".", 1)[0] or "image"
+        clean_key = f"clean/{asset.owner_id}/{asset.id}/{name}.{suffix_for(outcome.mime)}"
+        store.put(clean_key, outcome.data)
+        store.put(f"{clean_key}.thumb.webp", outcome.thumbnail)
+        store.delete(asset.object_key)
+
+        asset.object_key = clean_key
+        asset.mime = outcome.mime
+        asset.size = len(outcome.data)
+        asset.checksum = hashlib.sha256(outcome.data).hexdigest()
+        asset.width = outcome.width
+        asset.height = outcome.height
+        # 复用 #110 的扫描通过钩子：zone/scan_state/url/审计都在它里面。
+        return self.mark_clean(asset.id, request_id=request_id)
+
+    def scan_pending(
+        self, *, store: ObjectStore, limit: int = 10, request_id: str | None = None
+    ) -> dict[str, int]:
+        """扫一批待扫描资产；单个失败只计数、不打断整批（worker 要能持续推进）。"""
+        counts = {"scanned": 0, "clean": 0, "rejected": 0, "skipped": 0}
+        for asset in self.repo.list_scanning(limit):
+            counts["scanned"] += 1
+            try:
+                out = self.scan_asset(asset.id, store=store, request_id=request_id)
+            except AppError:
+                counts["skipped"] += 1
+                continue
+            if out.scan_state == ScanState.CLEAN.value:
+                counts["clean"] += 1
+            elif out.scan_state == ScanState.REJECTED.value:
+                counts["rejected"] += 1
+        return counts
 
     def publish(
         self,
