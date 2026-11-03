@@ -7,7 +7,7 @@ import { RouterLink } from 'vue-router'
 import type { Schemas } from '@/api/types'
 import DiffView from '@/modules/review-queue/diff-view.vue'
 import ReviewQueue from '@/modules/review-queue/index.vue'
-import { snapshotText } from '@/modules/review-queue/diff'
+import { snapshotText, snapshotToText } from '@/modules/review-queue/diff'
 import {
   decisionBlockedReason,
   isPendingTask,
@@ -21,6 +21,7 @@ import {
   decideReviewTask,
   fetchReviewTasks,
   fetchSubmission,
+  publishSubmission,
 } from '@/api/endpoints'
 import { api } from '@/shared/api'
 import { relativeTime, reviewActionLabel } from '@/shared/format'
@@ -46,6 +47,8 @@ const noticesError = ref('')
 
 const activeTask = ref<ReviewTask | null>(null)
 const submission = ref<SubmissionDetail | null>(null)
+/** 任务 id → 「路线标题 · 作者」，让队列第一行是可读的标题而不是 UUID */
+const labels = ref<Record<string, string>>({})
 const detailLoading = ref(false)
 const detailError = ref('')
 
@@ -59,8 +62,8 @@ const doneTasks = computed(() => tasks.value.filter((task) => !isPendingTask(tas
 
 const submissionTitle = computed(() => snapshotText(submission.value?.snapshot, 'title') || '未命名路线')
 const authorName = computed(() => submission.value?.author?.username ?? '未知作者')
-const previousContent = computed(() => snapshotText(submission.value?.previous_snapshot, 'content'))
-const currentContent = computed(() => snapshotText(submission.value?.snapshot, 'content'))
+const previousContent = computed(() => snapshotToText(submission.value?.previous_snapshot))
+const currentContent = computed(() => snapshotToText(submission.value?.snapshot))
 const noteError = computed(() => decisionBlockedReason(modalAction.value, note.value))
 
 function errorMessage(error: unknown): string {
@@ -82,11 +85,37 @@ async function loadTasks(): Promise<void> {
   listError.value = ''
   try {
     tasks.value = await fetchReviewTasks()
+    void loadTaskLabels()
   } catch (error) {
     listError.value = errorMessage(error)
   } finally {
     loading.value = false
   }
+}
+
+/**
+ * 审核任务只带 id；标题和作者要再查一次投稿详情。
+ * 队列一般只有个位数条，逐条查比让契约多一个字段更省事；失败就当作没有标签。
+ */
+async function loadTaskLabels(): Promise<void> {
+  const pending = tasks.value.filter((task) => task.submission_id).slice(0, 20)
+  const entries = await Promise.all(
+    pending.map(async (task) => {
+      try {
+        const detail = await fetchSubmission(task.submission_id as string)
+        const title = snapshotText(detail.snapshot, 'title') || '未命名路线'
+        const author = detail.author?.username ?? '未知作者'
+        return [task.id ?? '', `${title} · ${author}`] as const
+      } catch {
+        return [task.id ?? '', ''] as const
+      }
+    })
+  )
+  const next: Record<string, string> = { ...labels.value }
+  for (const [id, label] of entries) {
+    if (id && label) next[id] = label
+  }
+  labels.value = next
 }
 
 async function loadNotices(): Promise<void> {
@@ -114,6 +143,33 @@ async function claim(taskId: string): Promise<void> {
     upsert(claimed)
     if (activeTask.value?.id === taskId) activeTask.value = { ...activeTask.value, ...claimed }
     notice.value = '已领取任务 ' + taskId
+  } catch (error) {
+    listError.value = errorMessage(error)
+  } finally {
+    busyId.value = null
+  }
+}
+
+/**
+ * 发布上线：审核通过只代表内容没问题，还要编辑点一下才会出现在发现页。
+ * 契约要求版本号 + 内容 hash，所以先查投稿详情再发。
+ */
+async function publish(task: ReviewTask): Promise<void> {
+  const submissionId = task.submission_id
+  if (!submissionId) return
+  busyId.value = task.id ?? null
+  listError.value = ''
+  try {
+    const detail = await fetchSubmission(submissionId)
+    if (!detail.version_id || !detail.content_hash) {
+      listError.value = '这条投稿没有版本号或内容 hash，无法发布'
+      return
+    }
+    await publishSubmission(submissionId, {
+      version_id: detail.version_id,
+      content_hash: detail.content_hash,
+    })
+    notice.value = '已发布上线，发现页现在能看到它'
   } catch (error) {
     listError.value = errorMessage(error)
   } finally {
@@ -239,10 +295,12 @@ onMounted(async () => {
         <ReviewQueue
           v-else
           :tasks="pendingTasks"
+          :labels="labels"
           :active-id="activeTask?.id ?? null"
           :busy-id="busyId"
           @select="selectTask"
           @claim="claim"
+          @publish="publish"
         />
 
         <template v-if="activeTask">
@@ -269,6 +327,8 @@ onMounted(async () => {
         <ReviewQueue
           v-else
           :tasks="doneTasks"
+          :labels="labels"
+          @publish="publish"
           :active-id="activeTask?.id ?? null"
           @select="selectTask"
         />

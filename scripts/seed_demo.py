@@ -200,6 +200,8 @@ from app.modules.identity.service import hash_password, verify_password  # noqa:
 from app.modules.moderation.models import (  # noqa: E402
     Publication,
     PublicationState,
+    ReviewTask,
+    ReviewTaskState,
     Submission,
     SubmissionState,
 )
@@ -435,6 +437,50 @@ def _ensure_published(session, spec: DemoRoute, draft: RouteDraft, editor: User)
     return True
 
 
+def _ensure_for_review(session, spec: DemoRoute, draft: RouteDraft, editor: User) -> bool:
+    """给 SUBMITTED_LOCKED 的演示草稿补上投稿与审核任务。
+
+    审核后台读的是 submissions + review_tasks 两张表；只把草稿状态置成
+    SUBMITTED_LOCKED，审核队列仍然是 0 条（和发现页为空是同一类问题，见台账 P-19）。
+    """
+    if DraftState(spec.state) is not DraftState.SUBMITTED_LOCKED:
+        return False
+
+    version = session.scalar(
+        select(RouteVersion)
+        .where(RouteVersion.draft_id == draft.id)
+        .order_by(RouteVersion.version_no.desc())
+        .limit(1)
+    )
+    if version is None:
+        raise RuntimeError(f"演示路线 {spec.key} 没有冻结版本，先跑 _ensure_route")
+
+    submission = session.scalar(
+        select(Submission).where(
+            Submission.draft_id == draft.id, Submission.version_id == version.id
+        )
+    )
+    if submission is None:
+        submission = Submission(
+            draft_id=draft.id,
+            version_id=version.id,
+            content_hash=version.content_hash,
+            submitted_by=editor.id,
+            state=SubmissionState.PENDING_REVIEW,
+            note="演示种子：待审投稿，演示审核后台的领取与裁决",
+        )
+        session.add(submission)
+        session.flush()
+
+    exists = session.scalar(select(ReviewTask.id).where(ReviewTask.submission_id == submission.id))
+    if exists is not None:
+        return False
+
+    session.add(ReviewTask(submission_id=submission.id, state=ReviewTaskState.OPEN))
+    session.flush()
+    return True
+
+
 def _print_counts(session, place_ids: list[uuid.UUID]) -> None:
     fact_count = session.scalar(
         select(func.count()).select_from(PlaceFact).where(PlaceFact.place_id.in_(place_ids))
@@ -494,9 +540,11 @@ def main(argv: list[str] | None = None) -> int:
 
         route_stats = []
         published_new = 0
+        pending_new = 0
         for spec in DEMO_ROUTES:
             stats = _ensure_route(session, editor, spec)
             published_new += int(_ensure_published(session, spec, stats["draft"], editor))
+            pending_new += int(_ensure_for_review(session, spec, stats["draft"], editor))
             route_stats.append((spec, stats))
 
         session.commit()
@@ -524,6 +572,7 @@ def main(argv: list[str] | None = None) -> int:
             f"密码 {PASSWORD}"
         )
         print(f"[完成] 已发布路线新增 {published_new} 条（发现页可直接看到）")
+        print(f"[完成] 待审投稿新增 {pending_new} 条（审核后台可直接看到）")
         return 0
     except Exception as exc:  # noqa: BLE001
         session.rollback()

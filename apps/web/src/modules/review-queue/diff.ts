@@ -105,6 +105,55 @@ export function toDiffRows(ops: DiffOp[]): DiffRow[] {
 }
 
 /** 快照是 { [key: string]: unknown }，取值前先确认是字符串 */
+/** 快照里的交通是英文枚举，审核员要看到中文 */
+export function transportLabel(value: unknown): string {
+  if (typeof value !== 'string' || !value) return '步行'
+  const labels: Record<string, string> = {
+    walk: '步行',
+    metro: '地铁',
+    bus: '公交',
+    taxi: '打车',
+    bike: '骑行',
+    car: '自驾',
+  }
+  return labels[value] ?? value
+}
+
+/**
+ * 把投稿快照翻成可读文本，给「版本对照」做逐行 diff 用。
+ * 快照里没有 content 字段（只有 title/summary/theme_tags/nodes），
+ * 直接读 content 会让对照区永远空白 —— 这是 P-20 记的那个坑。
+ */
+export function snapshotToText(snapshot: Record<string, unknown> | null | undefined): string {
+  if (!snapshot) return ''
+  const lines: string[] = []
+  const title = snapshotText(snapshot, 'title')
+  if (title) lines.push(`标题：${title}`)
+  const summary = snapshotText(snapshot, 'summary')
+  if (summary) lines.push(`摘要：${summary}`)
+
+  const tags = Array.isArray(snapshot.theme_tags) ? snapshot.theme_tags : []
+  if (tags.length > 0) lines.push(`主题：${tags.join('、')}`)
+
+  const minutes = typeof snapshot.duration_minutes === 'number' ? snapshot.duration_minutes : null
+  if (minutes !== null) lines.push(`时长：${Math.round((minutes / 60) * 10) / 10} 小时`)
+
+  const nodes = Array.isArray(snapshot.nodes) ? snapshot.nodes : []
+  if (nodes.length > 0) {
+    lines.push(`节点（${nodes.length} 个）：`)
+    nodes.forEach((raw, index) => {
+      const node = (raw ?? {}) as Record<string, unknown>
+      const parts: string[] = []
+      if (typeof node.stay_minutes === 'number') parts.push(`停留 ${node.stay_minutes} 分钟`)
+      parts.push(transportLabel(node.transport))
+      const note = typeof node.note === 'string' ? node.note : ''
+      const head = `${index + 1}. ${parts.join(' · ')}`
+      lines.push(note ? `${head}｜${note}` : head)
+    })
+  }
+  return lines.join('\n')
+}
+
 export function snapshotText(
   snapshot: Record<string, unknown> | null | undefined,
   key: string,

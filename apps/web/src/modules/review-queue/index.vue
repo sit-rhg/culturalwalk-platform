@@ -6,15 +6,24 @@ import { relativeTime, reviewActionLabel } from '@/shared/format'
 
 import { reviewTaskStateLabel } from './state'
 
-defineProps<{
+const props = defineProps<{
   tasks: Schemas['ReviewTask'][]
   activeId?: string | null
   busyId?: string | null
+  /** task.id → 「路线标题 · 作者」；调用方补齐，缺了就退回显示任务号 */
+  labels?: Record<string, string>
 }>()
+
+/** 列表第一行优先显示人能读的标题，拿不到才退回任务号 */
+function taskLabel(task: Schemas['ReviewTask']): string {
+  const key = task.id ?? ''
+  return props.labels?.[key] ?? key
+}
 
 const emit = defineEmits<{
   select: [task: Schemas['ReviewTask']]
   claim: [taskId: string]
+  publish: [task: Schemas['ReviewTask']]
 }>()
 
 function onSelect(task: Schemas['ReviewTask']): void {
@@ -23,6 +32,15 @@ function onSelect(task: Schemas['ReviewTask']): void {
 
 function onClaim(task: Schemas['ReviewTask']): void {
   if (task.id) emit('claim', task.id)
+}
+
+/** 审核通过之后还要「发布」才会出现在发现页，这里给出入口 */
+function canPublish(task: Schemas['ReviewTask']): boolean {
+  return task.state === 'COMPLETED' && task.completed_action === 'approve'
+}
+
+function onPublish(task: Schemas['ReviewTask']): void {
+  emit('publish', task)
 }
 </script>
 
@@ -39,7 +57,7 @@ function onClaim(task: Schemas['ReviewTask']): void {
       @keydown.enter.prevent="onSelect(task)"
     >
       <div class="row task-head">
-        <span class="mono">{{ task.id }}</span>
+        <span class="task-title">{{ taskLabel(task) }}</span>
         <span class="badge" :class="'state-' + (task.state ?? '').toLowerCase()">
           {{ reviewTaskStateLabel(task.state) }}
         </span>
@@ -56,8 +74,19 @@ function onClaim(task: Schemas['ReviewTask']): void {
         >
           {{ busyId === task.id ? '领取中…' : '领取' }}
         </button>
+        <button
+          v-if="canPublish(task)"
+          class="btn small"
+          type="button"
+          :disabled="busyId === task.id"
+          @click.stop="onPublish(task)"
+        >
+          {{ busyId === task.id ? '发布中…' : '发布上线' }}
+        </button>
       </div>
-      <p class="muted mono submission">提交 {{ task.submission_id ?? '—' }}</p>
+      <p class="muted mono submission">
+        任务 {{ (task.id ?? '').slice(0, 8) }} · 提交 {{ (task.submission_id ?? '—').slice(0, 8) }}
+      </p>
     </li>
   </ul>
 </template>
@@ -95,6 +124,10 @@ function onClaim(task: Schemas['ReviewTask']): void {
 
 .when {
   margin-left: auto;
+}
+
+.task-title {
+  font-weight: 600;
 }
 
 .submission {

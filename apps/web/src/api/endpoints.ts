@@ -3,6 +3,7 @@
  * 页面只拿视图模型，不再自己拼 URL 或读 snake_case。
  */
 import { api } from '@/shared/api'
+import type { Schemas } from '@/api/types'
 
 import {
   type Comment,
@@ -74,6 +75,20 @@ export async function decideReviewTask(
 
 export async function fetchSubmission(submissionId: string): Promise<SubmissionDetail> {
   return api.get<SubmissionDetail>(`/submissions/${seg(submissionId)}`)
+}
+
+/**
+ * 发布：审核通过之后由编辑/管理员把这一版上线。
+ * 契约要求同时提交版本号与内容 hash —— 「发哪一版、内容是什么」两件事都要对上。
+ */
+export async function publishSubmission(
+  submissionId: string,
+  version: { version_id: string; content_hash: string },
+): Promise<Schemas['Publication']> {
+  return api.post<Schemas['Publication']>(`/submissions/${seg(submissionId)}/publish`, {
+    version_id: version.version_id,
+    content_hash: version.content_hash,
+  })
 }
 
 export async function fetchMyDrafts(): Promise<RouteDraft[]> {

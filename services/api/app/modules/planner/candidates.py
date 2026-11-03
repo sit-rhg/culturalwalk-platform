@@ -59,6 +59,9 @@ def catalog_candidate_source(db: Session):
                     lat=float(place.lat) if place.lat is not None else None,
                     lon=float(place.lon) if place.lon is not None else None,
                     stay_minutes=STAY_MINUTES.get(tags[0] if tags else "", DEFAULT_STAY_MINUTES),
+                    # 出处必须带上：核价/核源的判断只看 source_ids，这里漏填会让
+                    # 每个点位都被标成「待核实」，明明库里已经有来源链接（P-23）。
+                    source_ids=_source_ids(place),
                 )
             )
             if len(picked) >= ctx.days * CANDIDATES_PER_DAY:
@@ -66,6 +69,19 @@ def catalog_candidate_source(db: Session):
         return picked
 
     return load
+
+
+def _source_ids(place: Place) -> list[str]:
+    """把点位的来源 id 去重后交给候选：一条说法带来源，这个点位就算有据可查。"""
+    seen: list[str] = []
+    for fact in place.facts:
+        source_id = getattr(fact, "source_id", None)
+        if source_id is None:
+            continue
+        text = str(source_id)
+        if text not in seen:
+            seen.append(text)
+    return seen
 
 
 def _themes(ctx: PlanContext) -> list[str]:
