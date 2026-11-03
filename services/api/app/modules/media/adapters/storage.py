@@ -79,10 +79,13 @@ class PlaceholderS3Signer:
             "expiration": expiration.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "conditions": [
                 {"bucket": self.bucket},
-                ["starts-with", "$key", "quarantine/"],
+                # 精确绑定：一次签名只对这一个 key 有效。
+                # 用 starts-with "quarantine/" 时，客户端把表单里的 key 换成
+                # 别人的隔离区对象也能通过校验（ME-01 卡面要求「只能写指定 key」）。
+                {"key": object_key},
                 {"Content-Type": mime},
-                # 服务端声明的 size 只是提示；桶侧只兜住全局上限，避免客户端改字段绕过。
-                ["content-length-range", 1, settings.media_max_bytes],
+                # 长度也精确到服务端登记的 size：桶侧兜住"声明 2KB、实际传 2GB"。
+                ["content-length-range", size, size],
             ],
         }
         policy = base64.b64encode(
