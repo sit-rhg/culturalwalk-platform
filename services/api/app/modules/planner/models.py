@@ -26,6 +26,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -243,7 +244,9 @@ class AgentStep(Base):
     # 需要复现时按摘要去日志/对象存储里找。
     # 在流水线里排第几（0 起）。id 是随机 UUID，created_at 只到秒，
     # 两者都还原不出"先跑调研再排班"的顺序，所以要显式记一个序号。
-    step_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    step_index: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
     output_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
