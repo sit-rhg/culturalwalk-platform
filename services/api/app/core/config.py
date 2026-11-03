@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     s3_access_key: str = "minioadmin"
     s3_secret_key: str = "minioadmin"
     media_max_bytes: int = 10 * 1024 * 1024
+    # 本机对象存储根目录：扫描 worker 从这里读原件、写 clean 副本与缩略图。
+    # 接真 MinIO/S3 时由对象存储读写适配器换实现，service 与 worker 不用改。
+    media_storage_root: str = "var/media"
 
     # 外部 Provider（留空则走 fake 实现，便于无网演示）
     map_provider: str = "fake"  # fake | amap | tencent
