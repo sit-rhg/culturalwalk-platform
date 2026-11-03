@@ -211,6 +211,13 @@ export const api = {
       body: JSON.stringify(body),
       headers: { 'If-Match': String(lockVersion) },
     }),
+  /** PUT 是整表替换（如草稿节点），同样靠 If-Match 做乐观锁 */
+  put: <T>(path: string, body: unknown, lockVersion: number) =>
+    request<T>(path, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+      headers: { 'If-Match': String(lockVersion) },
+    }),
   del: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
 
   /**

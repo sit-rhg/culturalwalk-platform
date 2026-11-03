@@ -12,6 +12,7 @@ import {
   errorMessage,
   favoriteState,
   flattenItems,
+  isStaleDraftVersion,
   toComments,
   toDrafts,
   toPage,
@@ -121,5 +122,22 @@ describe('失败提示', () => {
   it('缺 message 的 ApiError 退回兜底文案', () => {
     const error = new ApiError(500, 'INTERNAL', '')
     expect(errorMessage(error, '服务暂时不可用')).toBe('服务暂时不可用')
+  })
+})
+
+describe('草稿乐观锁失效判定', () => {
+  it('412 与 STALE_DRAFT_VERSION 都算版本落后', () => {
+    expect(isStaleDraftVersion(new ApiError(412, 'STALE_DRAFT_VERSION', '草稿已被修改'))).toBe(true)
+    // 网关可能把状态码改掉，但信封里的 code 还在
+    expect(isStaleDraftVersion(new ApiError(400, 'STALE_DRAFT_VERSION', '草稿已被修改'))).toBe(true)
+    expect(isStaleDraftVersion(new ApiError(412, 'PRECONDITION_FAILED', ''))).toBe(true)
+  })
+
+  it('校验失败 / 网络异常不算版本落后，不能被页面吞成「重新载入」', () => {
+    expect(isStaleDraftVersion(new ApiError(422, 'VALIDATION_ERROR', '参数校验未通过'))).toBe(false)
+    expect(isStaleDraftVersion(new ApiError(409, 'IDEMPOTENCY_KEY_REUSED', '重复提交'))).toBe(false)
+    expect(isStaleDraftVersion(new ApiError(0, 'NETWORK_ERROR', '网络连接失败'))).toBe(false)
+    expect(isStaleDraftVersion(new Error('boom'))).toBe(false)
+    expect(isStaleDraftVersion(undefined)).toBe(false)
   })
 })

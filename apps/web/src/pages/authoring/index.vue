@@ -5,7 +5,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import type { Schemas } from '@/api/types'
-import { ApiError, api, request } from '@/shared/api'
+import { ApiError, api } from '@/shared/api'
 import { draftStateLabel, shortDate, transportLabel } from '@/shared/format'
 import { isLoggedIn } from '@/shared/session'
 import EmptyState from '@/shared/ui/EmptyState.vue'
@@ -23,6 +23,7 @@ import {
   validateNodes,
 } from './draft'
 import type { EditableNode } from './draft'
+import { saveDraftNodes } from './save'
 
 type Draft = Schemas['RouteDraft']
 type DraftDetail = Schemas['RouteDraftDetail']
@@ -176,18 +177,21 @@ async function save(): Promise<void> {
     return
   }
   saving.value = true
-  const draftId = detail.value.id
+  const draft = detail.value
   try {
-    // shared/api 只暴露 get/post/patch/del，PUT 走同模块的 request，仍然不碰 fetch
-    const res = await request<DraftDetail>('/route-drafts/' + draftId + '/nodes', {
-      method: 'PUT',
-      body: JSON.stringify({ nodes: buildNodePayload(nodes.value) }),
-    })
-    applyDetail(res)
-    saveNotice.value = '已保存'
-    await loadDrafts()
-  } catch (error) {
-    detailError.value = errorText(error)
+    // If-Match 必须带当前 lock_version：契约里它是必填，缺了后端直接 422
+    const result = await saveDraftNodes(draft.id, buildNodePayload(nodes.value), draft.lock_version)
+    if (result.ok) {
+      applyDetail(result.draft)
+      saveNotice.value = '已保存'
+      await loadDrafts()
+    } else if (result.stale) {
+      // 版本已经落后：换上服务器那份，别让用户对着作废的节点继续改
+      if (result.draft) applyDetail(result.draft)
+      detailError.value = result.message
+    } else {
+      detailError.value = errorText(result.error)
+    }
   } finally {
     saving.value = false
   }

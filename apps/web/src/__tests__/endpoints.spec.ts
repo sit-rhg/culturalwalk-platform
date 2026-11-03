@@ -304,3 +304,54 @@ describe('我的主页：通知已读与个人聚合', () => {
     expect(profile.published_routes).toHaveLength(1)
   })
 })
+
+describe('创作页：草稿节点保存的乐观锁', () => {
+  it('PUT /route-drafts/{id}/nodes 透传当前 lock_version 到 If-Match', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, { id: 'd-1', state: 'EDITING', lock_version: 8 }),
+    )
+
+    const detail = await endpoints.replaceDraftNodes(
+      'd-1',
+      [{ place_id: 'p-1', stay_minutes: 60, transport: 'walk', note: null, price_min: null, price_max: null }],
+      7,
+    )
+
+    expect(urlOf()).toBe('/api/v1/route-drafts/d-1/nodes')
+    expect(initOf().method).toBe('PUT')
+    const headers = initOf().headers as Headers
+    expect(headers.get('If-Match')).toBe('7')
+    // 写操作仍要带幂等键：后端重放靠它
+    expect(headers.get('Idempotency-Key')).toBeTruthy()
+    expect(bodyOf()).toEqual({
+      nodes: [
+        { place_id: 'p-1', stay_minutes: 60, transport: 'walk', note: null, price_min: null, price_max: null },
+      ],
+    })
+    expect(detail.lock_version).toBe(8)
+  })
+
+  it('版本落后时后端回 412 STALE_DRAFT_VERSION，页面拿到的是 ApiError 而不是 undefined', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(412, {
+        error: { code: 'STALE_DRAFT_VERSION', message: '草稿已被修改，请刷新后重试' },
+      }),
+    )
+
+    await expect(endpoints.replaceDraftNodes('d-1', [], 3)).rejects.toMatchObject({
+      status: 412,
+      code: 'STALE_DRAFT_VERSION',
+    })
+  })
+
+  it('重新拉草稿详情走 GET /route-drafts/{id}', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, { id: 'd-1', state: 'EDITING', lock_version: 9, nodes: [] }),
+    )
+
+    const detail = await endpoints.fetchDraftDetail('d-1')
+
+    expect(urlOf()).toBe('/api/v1/route-drafts/d-1')
+    expect(detail.lock_version).toBe(9)
+  })
+})

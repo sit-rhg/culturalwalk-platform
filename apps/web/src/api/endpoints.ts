@@ -10,6 +10,7 @@ import {
   type Page,
   type RouteDetail,
   type RouteDraft,
+  type RouteDraftDetail,
   type RouteSummary,
   type ReviewTask,
   type Submission,
@@ -93,6 +94,22 @@ export async function publishSubmission(
 
 export async function fetchMyDrafts(): Promise<RouteDraft[]> {
   return toDrafts(await api.get<RawPage<RouteDraft>>('/route-drafts'))
+}
+
+export async function fetchDraftDetail(draftId: string): Promise<RouteDraftDetail> {
+  return api.get<RouteDraftDetail>(`/route-drafts/${seg(draftId)}`)
+}
+
+/**
+ * 整表替换草稿节点。契约把 If-Match 标成必填：不带就是 422，
+ * 带了但落后于库里的 lock_version 是 412 STALE_DRAFT_VERSION。
+ */
+export async function replaceDraftNodes(
+  draftId: string,
+  nodes: Schemas['RouteNodeInput'][],
+  lockVersion: number,
+): Promise<RouteDraftDetail> {
+  return api.put<RouteDraftDetail>(`/route-drafts/${seg(draftId)}/nodes`, { nodes }, lockVersion)
 }
 
 export async function submitDraft(draftId: string, note?: string): Promise<Submission> {

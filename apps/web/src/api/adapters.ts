@@ -17,6 +17,7 @@ export type ReviewTask = Schemas['ReviewTask']
 export type Submission = Schemas['Submission']
 export type SubmissionDetail = Schemas['SubmissionDetail']
 export type RouteDraft = Schemas['RouteDraft']
+export type RouteDraftDetail = Schemas['RouteDraftDetail']
 export type Notification = Schemas['Notification']
 export type UserProfile = Schemas['UserProfile']
 
@@ -38,6 +39,14 @@ export function errorMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiError && error.message) return error.message
   if (error instanceof Error && error.message && !/^HTTP \d+$/.test(error.message)) return error.message
   return fallback
+}
+
+/**
+ * 草稿乐观锁失效：后端在 If-Match 落后时回 412 STALE_DRAFT_VERSION。
+ * 这是「别处刚存过」而不是「你填错了」，页面要重新拉一次草稿再让用户改。
+ */
+export function isStaleDraftVersion(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 412 || error.code === 'STALE_DRAFT_VERSION')
 }
 
 export function routeTitle(route: RouteSummary): string {
