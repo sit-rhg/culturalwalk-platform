@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -15,10 +16,14 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.db import get_db
 from app.core.deps import create_access_token
+from app.main import app
 from app.modules.audit.models import AuditLog
+from app.modules.audit.service import AuditService
 from app.modules.moderation.models import ReviewTask as ReviewTaskModel
 from app.modules.moderation.models import Submission
+from app.modules.routes.models import RouteVersion
 
 API = "/api/v1"
 EDITOR_ID = "33333333-3333-3333-3333-333333333333"
@@ -212,6 +217,126 @@ def test_submit_review_publish_unpublish_happy_path(
         "publication.publish",
         "publication.unpublish",
     } <= actions
+
+
+# ===== MD-04 验收：下线后公共读取必须 404 =====
+def test_unpublish_removes_public_detail_and_list_entry(
+    client: TestClient,
+    user_headers: dict[str, str],
+    editor_headers: dict[str, str],
+) -> None:
+    """发布后公共详情 200；下线后同一地址 404，公开列表里也不再出现。"""
+    draft_id = _create_draft(client, user_headers, title="下线验收路线")
+    submission = _submit(client, user_headers, draft_id)
+    approved, _task = _approve(client, editor_headers, submission["id"])
+    published = _post(
+        client,
+        f"{API}/submissions/{submission['id']}/publish",
+        editor_headers,
+        json=_publish_payload(approved),
+    )
+    assert published.status_code == 201, published.text
+    publication = published.json()
+    route_id = publication["route_id"]
+
+    detail = client.get(f"{API}/routes/{route_id}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["id"] == route_id
+    assert detail.json()["version_id"] == publication["version_id"]
+
+    listed = client.get(f"{API}/routes", params={"limit": 50})
+    assert listed.status_code == 200, listed.text
+    assert route_id in {item["id"] for item in listed.json()["items"]}
+
+    unpublished = _post(
+        client,
+        f"{API}/publications/{publication['id']}/unpublish",
+        editor_headers,
+        json={"reason": "下线后公共详情必须 404"},
+    )
+    assert unpublished.status_code == 200, unpublished.text
+    assert unpublished.json()["state"] == "UNPUBLISHED"
+
+    # 下线只改 publications.state，版本行的 route_id 仍在：公共读取必须按发布态判 404。
+    gone = client.get(f"{API}/routes/{route_id}")
+    assert gone.status_code == 404, gone.text
+    assert _code(gone) == "ROUTE_NOT_FOUND"
+
+    listed_after = client.get(f"{API}/routes", params={"limit": 50})
+    assert listed_after.status_code == 200, listed_after.text
+    assert route_id not in {item["id"] for item in listed_after.json()["items"]}
+
+
+# ===== MD-01 验收：提交事务失败要整体回滚 =====
+def test_submit_rolls_back_when_audit_write_fails(
+    db_session: Session,
+    user_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """冻结版本 / 建投稿 / 建审核任务 / 写审计里最后一步失败，一个事务整体回滚。
+
+    conftest 的 get_db 覆盖只共享会话、不做提交与回滚，这里临时换回生产语义
+    （成功 commit、异常 rollback），否则「回滚」这一步根本不会被执行；
+    同时用 raise_server_exceptions=False 才能读到 500 的统一错误信封。
+    """
+
+    def _prod_like_override() -> Iterator[Session]:
+        try:
+            yield db_session
+            db_session.commit()
+        except Exception:
+            db_session.rollback()
+            raise
+
+    app.dependency_overrides[get_db] = _prod_like_override
+    try:
+        with TestClient(app, raise_server_exceptions=False) as test_client:
+            draft_id = _create_draft(test_client, user_headers)
+            before = test_client.get(f"{API}/route-drafts/{draft_id}", headers=user_headers)
+            assert before.status_code == 200, before.text
+            before_body = before.json()
+            assert before_body["state"] == "EDITING"
+
+            def _count(model: type) -> int:
+                return int(db_session.scalar(select(func.count()).select_from(model)) or 0)
+
+            models = (RouteVersion, Submission, ReviewTaskModel, AuditLog)
+            counts_before = {model: _count(model) for model in models}
+
+            def _explode(*args: Any, **kwargs: Any) -> None:
+                raise RuntimeError("审计写入失败（测试注入）")
+
+            monkeypatch.setattr(AuditService, "write", _explode)
+            response = _post(
+                test_client,
+                f"{API}/route-drafts/{draft_id}/submit",
+                user_headers,
+                json={"note": "请审核"},
+            )
+            assert response.status_code == 500, response.text
+            assert _code(response) == "INTERNAL_ERROR"
+
+            # 版本 / 投稿 / 审核任务 / 审计：一条脏数据都不能留下。
+            assert {model: _count(model) for model in models} == counts_before
+
+            after = test_client.get(f"{API}/route-drafts/{draft_id}", headers=user_headers)
+            assert after.status_code == 200, after.text
+            after_body = after.json()
+            assert after_body["state"] == "EDITING"
+            assert after_body["lock_version"] == before_body["lock_version"]
+
+            # 回滚干净后草稿仍可继续提交（重试一次能成功）。
+            monkeypatch.undo()
+            resubmit = _post(
+                test_client,
+                f"{API}/route-drafts/{draft_id}/submit",
+                user_headers,
+                json={"note": "回滚后重试"},
+            )
+            assert resubmit.status_code == 201, resubmit.text
+            assert resubmit.json()["state"] == "PENDING_REVIEW"
+    finally:
+        app.dependency_overrides.pop(get_db, None)
 
 
 # ===== 幂等 =====

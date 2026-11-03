@@ -69,3 +69,14 @@ demo.db
 services/api/demo.db
 pytest-of-*/
 **/pytest-of-*/
+
+# ---- 本地演示库与 pytest 临时目录（不入库）----
+demo.db
+services/api/demo.db
+pytest-of-*/
+*.db-journal
+
+# ---- Playwright 端到端产物（不入库）----
+apps/web/test-results/
+apps/web/playwright-report/
+apps/web/blob-report/
