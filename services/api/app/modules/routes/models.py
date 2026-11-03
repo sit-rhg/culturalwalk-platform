@@ -22,6 +22,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Uuid,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -180,6 +181,14 @@ class RouteNode(Base):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     price_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
     price_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 节点引用的媒体资产只存 id（跨模块不建关联表/外键，docs/02 §1）。
+    # 是否已扫描 clean、是否本人资产，由 media 模块在写入前核验。
+    media_asset_ids: Mapped[list[str]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"),
+        nullable=False,
+        default=list,
+        server_default=text("'[]'"),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )

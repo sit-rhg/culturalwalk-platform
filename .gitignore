@@ -61,3 +61,4 @@ pip-metadata-*/
 pip-modern-metadata-*/
 pip-unpack-*/
 pip-*/
+.tmp/
