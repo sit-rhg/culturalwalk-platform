@@ -2,14 +2,13 @@
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 import type { Schemas } from '@/api/types'
-import { channelLabel, durationLabel, moneyRange } from '@/shared/format'
+import { channelLabel, costText, durationLabel } from '@/shared/format'
 
 const props = defineProps<{ route: Schemas['RouteSummary'] }>()
 
 const themes = computed(() => (props.route.theme_tags ?? []).slice(0, 4))
-const priceText = computed(() =>
-  moneyRange(props.route.cost?.min_total, props.route.cost?.max_total),
-)
+// 一个节点都没核价时不能显示 ¥0：那是“还没算”，不是“免费”。
+const priceText = computed(() => costText(props.route.cost))
 </script>
 
 <template>

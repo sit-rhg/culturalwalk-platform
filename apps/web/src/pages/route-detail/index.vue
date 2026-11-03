@@ -10,6 +10,7 @@ import { ApiError } from '@/shared/api'
 import {
   channelLabel,
   confidenceLabel,
+  costText,
   durationLabel,
   moneyRange,
   transportLabel,
@@ -38,6 +39,8 @@ const routeId = computed(() => {
 })
 
 const detail = ref<RouteDetail | null>(null)
+// 没核价的节点按“待核实”说，别显示成 ¥0（看上去像免费）。
+const priceText = computed(() => costText(detail.value?.cost))
 const loading = ref(true)
 const loadError = ref('')
 const notFound = ref(false)
@@ -124,7 +127,7 @@ async function toggleFavorite(): Promise<void> {
           <span>·</span>
           <span>{{ durationLabel(detail.duration_minutes) }}</span>
           <span>·</span>
-          <span>{{ moneyRange(detail.cost?.min_total, detail.cost?.max_total) }}</span>
+          <span>{{ priceText }}</span>
           <span>·</span>
           <span>{{ detail.comment_count ?? 0 }} 条评论</span>
         </p>

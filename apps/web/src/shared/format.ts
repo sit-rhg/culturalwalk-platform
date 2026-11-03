@@ -50,6 +50,20 @@ export function moneyRange(min: number | null | undefined, max: number | null | 
   return money(max ?? min)
 }
 
+/** 路线费用的一句话说法：没核过价的节点要明说，不能显示成 ¥0。 */
+export function costText(
+  cost:
+    | { min_total?: number; max_total?: number; currency?: string; unknown_count?: number }
+    | null
+    | undefined,
+): string {
+  if (!cost) return '费用未估'
+  const unknown = cost.unknown_count ?? 0
+  const range = moneyRange(cost.min_total, cost.max_total)
+  if (unknown > 0 && !cost.max_total) return '费用待核实'
+  return unknown > 0 ? range + '（' + unknown + ' 个节点待核价）' : range
+}
+
 export function durationLabel(minutes: number | null | undefined): string {
   if (minutes == null) return '时长待定'
   const hours = Math.floor(minutes / 60)
