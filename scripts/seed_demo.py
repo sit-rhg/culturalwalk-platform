@@ -174,7 +174,7 @@ _url = _database_url_from_argv(sys.argv[1:])
 if _url:
     os.environ["DATABASE_URL"] = _url
 
-from sqlalchemy import func, select  # noqa: E402
+from sqlalchemy import func, select, update  # noqa: E402
 from sqlalchemy.engine import make_url  # noqa: E402
 
 from app.core.config import settings  # noqa: E402
@@ -193,6 +193,12 @@ from app.modules.catalog.seed import (  # noqa: E402
 )
 from app.modules.identity.models import STATUS_ACTIVE, User  # noqa: E402
 from app.modules.identity.service import hash_password, verify_password  # noqa: E402
+from app.modules.moderation.models import (  # noqa: E402
+    Publication,
+    PublicationState,
+    Submission,
+    SubmissionState,
+)
 from app.modules.routes.models import DraftState, RouteDraft, RouteVersion  # noqa: E402
 from app.modules.routes.schemas import (  # noqa: E402
     RouteDraftCreate,
@@ -356,6 +362,70 @@ def _ensure_route(session, editor: User, spec: DemoRoute) -> dict[str, object]:
     }
 
 
+def _ensure_published(session, spec: DemoRoute, draft: RouteDraft, editor: User) -> bool:
+    """给 APPROVED_LOCKED 的演示草稿补上投稿与发布记录。
+
+    公开列表读的是「有发布记录的路线」，只有 RouteDraft.state 还不够：没有
+    submission / publication 行，首页发现页就是空的（台账 P-19）。
+    """
+    if DraftState(spec.state) is not DraftState.APPROVED_LOCKED:
+        return False
+
+    version = session.scalar(
+        select(RouteVersion)
+        .where(RouteVersion.draft_id == draft.id)
+        .order_by(RouteVersion.version_no.desc())
+        .limit(1)
+    )
+    if version is None:
+        raise RuntimeError(f"演示路线 {spec.key} 没有冻结版本，先跑 _ensure_route")
+
+    if draft.route_id is None:
+        draft.route_id = uuid.uuid4()
+        session.execute(
+            update(RouteVersion)
+            .where(RouteVersion.draft_id == draft.id, RouteVersion.route_id.is_(None))
+            .values(route_id=draft.route_id)
+        )
+        session.flush()
+
+    submission = session.scalar(
+        select(Submission).where(
+            Submission.draft_id == draft.id, Submission.version_id == version.id
+        )
+    )
+    if submission is None:
+        submission = Submission(
+            draft_id=draft.id,
+            route_id=draft.route_id,
+            version_id=version.id,
+            content_hash=version.content_hash,
+            submitted_by=editor.id,
+            state=SubmissionState.APPROVED,
+            note="演示种子：直接落终态，审核过程不重放",
+        )
+        session.add(submission)
+        session.flush()
+
+    exists = session.scalar(select(Publication.id).where(Publication.version_id == version.id))
+    if exists is not None:
+        return False
+
+    session.add(
+        Publication(
+            submission_id=submission.id,
+            route_id=draft.route_id,
+            version_id=version.id,
+            content_hash=version.content_hash,
+            state=PublicationState.PUBLISHED,
+            published_by=editor.id,
+            published_at=datetime.now(UTC),
+        )
+    )
+    session.flush()
+    return True
+
+
 def _print_counts(session, place_ids: list[uuid.UUID]) -> None:
     fact_count = session.scalar(
         select(func.count()).select_from(PlaceFact).where(PlaceFact.place_id.in_(place_ids))
@@ -414,8 +484,11 @@ def main(argv: list[str] | None = None) -> int:
             facts_created += int(fact_added)
 
         route_stats = []
+        published_new = 0
         for spec in DEMO_ROUTES:
-            route_stats.append((spec, _ensure_route(session, editor, spec)))
+            stats = _ensure_route(session, editor, spec)
+            published_new += int(_ensure_published(session, spec, stats["draft"], editor))
+            route_stats.append((spec, stats))
 
         session.commit()
 
@@ -441,6 +514,7 @@ def main(argv: list[str] | None = None) -> int:
             "[完成] 演示账号：editor@demo.local / reviewer@demo.local / demo@demo.local，"
             f"密码 {PASSWORD}"
         )
+        print(f"[完成] 已发布路线新增 {published_new} 条（发现页可直接看到）")
         return 0
     except Exception as exc:  # noqa: BLE001
         session.rollback()
