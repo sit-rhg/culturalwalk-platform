@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Header, Request
+from fastapi import APIRouter, Header, Request, Response
 
 from app.core.db import DbDep
 from app.core.deps import CurrentUserDep
@@ -75,3 +75,28 @@ def complete_media_upload(
 )
 def get_media(media_id: uuid.UUID, user: CurrentUserDep, db: DbDep) -> MediaAssetOut:
     return MediaService(db).get_for_viewer(media_id=media_id, actor=user)
+
+
+@router.delete(
+    "/{media_id}",
+    status_code=204,
+    summary="删除媒体（软删；被草稿引用时 409）",
+)
+def delete_media(
+    media_id: uuid.UUID,
+    user: CurrentUserDep,
+    db: DbDep,
+    request: Request,
+) -> Response:
+    # 局部导入：routes.service 顶层已 import media.service，这里反向 import 放函数内，
+    # 避免两个模块在导入期成环。
+    from app.modules.routes.service import RoutesService
+
+    references = RoutesService(db).drafts_referencing_media(media_id)
+    MediaService(db).delete_asset(
+        media_id=media_id,
+        actor=user,
+        references=references,
+        request_id=_request_id(request),
+    )
+    return Response(status_code=204)

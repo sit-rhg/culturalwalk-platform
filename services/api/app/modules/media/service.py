@@ -335,6 +335,50 @@ class MediaService:
             )
         return self._asset_out(asset)
 
+    # ---------- 删除（ME-03） ----------
+
+    def delete_asset(
+        self,
+        *,
+        media_id: uuid.UUID,
+        actor: CurrentUser,
+        references: list[tuple[uuid.UUID, str]],
+        request_id: str | None = None,
+    ) -> None:
+        """软删：置 deleted_at，之后读不到、也不能再被引用。
+
+        `references` 是引用该媒体的草稿（draft_id, title），由调用方从 routes 模块取；
+        media 模块不反向依赖 routes 的表。存在引用时返回 409，避免已发布的路线
+        在展示时突然少图——要删先改草稿。
+        """
+        asset = self.repo.get(media_id)
+        # 他人资产按"不存在"处理：删除接口不泄露别人上传过什么。
+        if asset is None or asset.owner_id != _actor_id(actor):
+            raise NotFound("媒体不存在", code="MEDIA_NOT_FOUND")
+        if references:
+            raise Conflict(
+                "媒体正被路线草稿引用，不能删除",
+                code="MEDIA_IN_USE",
+                details=[
+                    {
+                        "field": "media_asset_ids",
+                        "reason": f"草稿 {draft_id}（{title}）引用了该媒体",
+                    }
+                    for draft_id, title in references
+                ],
+            )
+        asset.deleted_at = utcnow()
+        audit.write(
+            self.db,
+            action="media.delete",
+            object_type="media_asset",
+            object_id=str(asset.id),
+            actor_id=str(asset.owner_id),
+            actor_username=actor.username,
+            after_hash=audit.AuditService.digest({"deleted_at": asset.deleted_at}),
+            request_id=request_id,
+        )
+
     # ---------- 出参 ----------
 
     def _intent_out(self, asset: MediaAsset) -> MediaIntentOut:

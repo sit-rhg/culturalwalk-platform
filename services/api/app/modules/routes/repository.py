@@ -3,11 +3,12 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime
 from typing import Any, cast
 
-from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, text, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
@@ -101,6 +102,34 @@ class RoutesRepository:
         self.db.execute(delete(RouteNode).where(RouteNode.draft_id == draft_id))
         self.db.add_all(nodes)
         self.db.flush()
+
+    # ===== 媒体引用 =====
+    def list_drafts_referencing_media(self, asset_id: uuid.UUID) -> list[RouteDraft]:
+        """反查引用某条媒体资产的草稿。
+
+        route_nodes.media_asset_ids 是 JSON 数组（PG 上是 jsonb）。这里按方言分支：
+        PG 用 `@>` 让 GIN 能命中，SQLite 用 json_each 展开——和 catalog 的 tag
+        过滤是同一套写法。媒体删除前用它做 409 检查。
+        """
+        payload = json.dumps([str(asset_id)])
+        bind = self.db.get_bind()
+        if bind.dialect.name == "postgresql":
+            condition = text("route_nodes.media_asset_ids @> CAST(:payload AS jsonb)").bindparams(
+                payload=payload
+            )
+        else:
+            condition = text(
+                "EXISTS (SELECT 1 FROM json_each(route_nodes.media_asset_ids) "
+                "WHERE json_each.value = :asset_id)"
+            ).bindparams(asset_id=str(asset_id))
+        stmt = (
+            select(RouteDraft)
+            .join(RouteNode, RouteNode.draft_id == RouteDraft.id)
+            .where(condition)
+            .distinct()
+            .order_by(RouteDraft.created_at)
+        )
+        return list(self.db.scalars(stmt))
 
     # ===== 版本 =====
     def has_versions(self, draft_id: uuid.UUID) -> bool:
