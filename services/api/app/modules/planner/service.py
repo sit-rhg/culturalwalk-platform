@@ -431,6 +431,9 @@ class PlannerService:
         先清后写：重新生成时如果只追加，旧的第 3 天会留在新生成的两天行程里。
         价格不是"查到了就填"：只有来源可信才填数字，其余留空并标「待核实」，
         这样前端把 `confidence != verified` 的项打上标记就是准的。
+
+        注意这是「重建」而不是「原地更新」：重跑之后每一项的 id 都会变。
+        内容一致就够了，别拿 item.id 当外部引用（要引用就用 天序号 + 顺序）。
         """
         lookup = places or catalog_place_source(self.db)
         self.repo.clear_plan_content(itinerary.id)
@@ -561,7 +564,9 @@ class PlannerService:
 
         drafts = port or routes_draft_port(self.db)
         # 幂等键由行程 id 派生：用户手滑点两次"生成草稿"，落到的还是同一份。
-        route_key = routes_idempotency_key(itinerary.id)
+        # 幂等键由「行程 id + 内容摘要」派生：手滑点两次落到同一份草稿，
+        # 改了行程内容再点则换新键、生成新草稿（同 key 不同内容会被 routes 判 409）。
+        route_key = routes_idempotency_key(itinerary.id, itinerary.input_hash)
         draft_id = drafts.create(owner_id=user_id, spec=spec, idempotency_key=route_key)
         drafts.replace_nodes(
             draft_id=draft_id,
