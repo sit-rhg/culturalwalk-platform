@@ -457,6 +457,16 @@ class RoutesService:
             ],
         }
 
+    # ===== 媒体引用（给 media 删除做 409 检查） =====
+    def drafts_referencing_media(self, asset_id: uuid.UUID) -> list[tuple[uuid.UUID, str]]:
+        """返回引用该媒体资产的草稿 (draft_id, title)。
+
+        只读查询，不做权限判断：媒体删除时由调用方按"本人资产"校验归属。
+        """
+        return [
+            (draft.id, draft.title) for draft in self.repo.list_drafts_referencing_media(asset_id)
+        ]
+
     # ===== 删除草稿 =====
     def delete(self, *, draft_id: uuid.UUID, owner_id: uuid.UUID) -> None:
         draft = self._load_owned(draft_id=draft_id, owner_id=owner_id)

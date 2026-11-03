@@ -21,7 +21,12 @@ class MediaRepository:
         return asset
 
     def get(self, media_id: uuid.UUID) -> MediaAsset | None:
-        return self.db.get(MediaAsset, media_id)
+        """默认只返回未删除的资产：软删之后对读接口等价于不存在。"""
+        stmt = select(MediaAsset).where(
+            MediaAsset.id == media_id,
+            MediaAsset.deleted_at.is_(None),
+        )
+        return self.db.scalar(stmt)
 
     def get_by_idempotency_key(
         self, *, owner_id: uuid.UUID, idempotency_key: str
@@ -30,5 +35,6 @@ class MediaRepository:
         stmt = select(MediaAsset).where(
             MediaAsset.owner_id == owner_id,
             MediaAsset.idempotency_key == idempotency_key,
+            MediaAsset.deleted_at.is_(None),
         )
         return self.db.scalar(stmt)

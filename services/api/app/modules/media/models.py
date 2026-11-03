@@ -101,6 +101,9 @@ class MediaAsset(Base):
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # 同一个上传者用同一个 key 重试时，返回首次那条资产。
     idempotency_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 软删（ME-03）：置位后不再出现在读接口里，也不再允许被引用；对象由后续
+    # 清理任务回收，这里不删行，便于审计与幂等键排查。
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
