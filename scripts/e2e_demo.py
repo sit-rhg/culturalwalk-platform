@@ -50,21 +50,23 @@ def main() -> int:
             raw = exc.read()
             try:
                 return exc.code, json.loads(raw)
-            except Exception:
+            except ValueError:
                 return exc.code, raw[:300].decode("utf-8", "replace")
 
     def idem() -> dict[str, str]:
         return {"Idempotency-Key": "demo-" + uuid.uuid4().hex[:12]}
 
     def login(username: str) -> str:
-        status, data = call("POST", "/auth/login", {"username": username, "password": PASSWORD})
+        status, data = call(
+            "POST", "/auth/login", {"username": username, "password": PASSWORD}
+        )
         assert status == 200, (status, data)
         return data["access_token"]
 
     def step(name: str, fn):
         try:
             result = fn()
-        except Exception as exc:  # noqa: BLE001 - 演示脚本要打印人能看懂的原因
+        except Exception as exc:
             print(f"[FAIL] {name}: {exc}")
             raise SystemExit(1) from exc
         print(f"[OK] {name}" + (f" -> {result}" if result is not None else ""))
@@ -76,7 +78,9 @@ def main() -> int:
     print("[OK] 登录 reviewer@demo.local")
 
     routes = step("发现页", lambda: call("GET", "/routes?limit=50")[1]["items"])
-    step("  已发布至少 2 条", lambda: len(routes) >= 2 or _fail(f"只有 {len(routes)} 条"))
+    step(
+        "  已发布至少 2 条", lambda: len(routes) >= 2 or _fail(f"只有 {len(routes)} 条")
+    )
 
     plan_id = step(
         "提交规划",
@@ -103,14 +107,21 @@ def main() -> int:
 
     places = step("取点位", lambda: call("GET", "/places?limit=6")[1]["items"])
     place_ids = [p["id"] for p in places][:3]
-    step("  至少 3 个", lambda: len(place_ids) >= 3 or _fail(f"只有 {len(place_ids)} 个"))
+    step(
+        "  至少 3 个", lambda: len(place_ids) >= 3 or _fail(f"只有 {len(place_ids)} 个")
+    )
 
     draft_id = step(
         "建草稿",
         lambda: call(
             "POST",
             "/route-drafts",
-            {"title": TITLE, "summary": "演示验收自动生成", "theme_tags": ["历史"], "duration_minutes": 120},
+            {
+                "title": TITLE,
+                "summary": "演示验收自动生成",
+                "theme_tags": ["历史"],
+                "duration_minutes": 120,
+            },
             token=user,
             extra=idem(),
         )[1]["id"],
@@ -121,7 +132,12 @@ def main() -> int:
         status, data = call(
             "PUT",
             f"/route-drafts/{draft_id}/nodes",
-            {"nodes": [{"place_id": pid, "stay_minutes": 30, "transport": "walk"} for pid in place_ids]},
+            {
+                "nodes": [
+                    {"place_id": pid, "stay_minutes": 30, "transport": "walk"}
+                    for pid in place_ids
+                ]
+            },
             token=user,
             extra={"If-Match": str(draft.get("lock_version", 0)), **idem()},
         )
@@ -129,7 +145,12 @@ def main() -> int:
         return "3 个点位写入"
 
     step("写点位", put_nodes)
-    step("投稿", lambda: call("POST", f"/route-drafts/{draft_id}/submit", {}, token=user, extra=idem()))
+    step(
+        "投稿",
+        lambda: call(
+            "POST", f"/route-drafts/{draft_id}/submit", {}, token=user, extra=idem()
+        ),
+    )
 
     box: dict[str, str] = {}
 
@@ -139,7 +160,9 @@ def main() -> int:
         if not opened:
             _fail("没有待审任务：投稿那步没成功？")
         task_id = opened[0]["id"]
-        status, body = call("POST", f"/review/tasks/{task_id}/claim", {}, token=reviewer, extra=idem())
+        status, body = call(
+            "POST", f"/review/tasks/{task_id}/claim", {}, token=reviewer, extra=idem()
+        )
         assert status in (200, 201), (status, body)
         box["submission_id"] = opened[0]["submission_id"]
         return task_id
@@ -162,7 +185,13 @@ def main() -> int:
         status, sub = call("GET", f"/submissions/{submission_id}", token=reviewer)
         assert status == 200, (status, sub)
         body = {"version_id": sub["version_id"], "content_hash": sub["content_hash"]}
-        status, data = call("POST", f"/submissions/{submission_id}/publish", body, token=reviewer, extra=idem())
+        status, data = call(
+            "POST",
+            f"/submissions/{submission_id}/publish",
+            body,
+            token=reviewer,
+            extra=idem(),
+        )
         assert status in (200, 201), (status, data)
         return data.get("state") or data.get("status")
 
@@ -178,10 +207,14 @@ def main() -> int:
 
     def interact() -> str:
         items = call("GET", "/routes?limit=50")[1]["items"]
-        route_id = [item["id"] for item in items if item["title"] == TITLE][0]
+        route_id = next(item["id"] for item in items if item["title"] == TITLE)
         call("POST", f"/routes/{route_id}/favorite", None, token=user)
         status, data = call(
-            "POST", f"/routes/{route_id}/comments", {"body": "演示评论：这条路线走下来很顺"}, token=user, extra=idem()
+            "POST",
+            f"/routes/{route_id}/comments",
+            {"body": "演示评论：这条路线走下来很顺"},
+            token=user,
+            extra=idem(),
         )
         assert status in (200, 201), (status, data)
         return "收藏 + 评论成功"
