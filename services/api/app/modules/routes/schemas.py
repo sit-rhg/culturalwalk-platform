@@ -96,8 +96,8 @@ class RouteNodeInput(BaseModel):
     note: str | None = None
     price_min: int | None = Field(default=None, ge=0)
     price_max: int | None = Field(default=None, ge=0)
-    # 契约里有这个字段，但媒体模块（ME-02）还没落地：先收下、不落库，
-    # 等 ME-02 定义了 asset 的所有权校验再补列，避免存一堆没人能验证的 ID。
+    # 只能是本人名下、已扫描通过的 CLEAN 资产；写入前由 media 模块的
+    # require_referenceable 核验，routes 不复制扫描状态的判定逻辑。
     media_asset_ids: list[uuid.UUID] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -131,6 +131,9 @@ class RouteNodeOut(BaseModel):
     note: str | None = None
     price_min: int | None = None
     price_max: int | None = None
+    # 契约的 RouteNodeInput 只有 media_asset_ids，没定义输出形状；
+    # 详情把同一份 id 回显，草稿页才能渲染缩略图。
+    media_asset_ids: list[uuid.UUID] = Field(default_factory=list)
 
 
 class CostSummaryOut(BaseModel):

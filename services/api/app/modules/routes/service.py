@@ -20,6 +20,7 @@ from app.core.errors import Conflict, Forbidden, NotFound, PreconditionFailed, V
 from app.core.pagination import decode_cursor, encode_cursor
 from app.modules.catalog.schemas import PlaceOut
 from app.modules.catalog.service import CatalogService
+from app.modules.media.service import MediaService
 from app.modules.routes.models import DraftState, RouteDraft, RouteNode, RouteVersion
 from app.modules.routes.repository import RoutesRepository
 from app.modules.routes.schemas import (
@@ -274,6 +275,8 @@ class RoutesService:
         # 先把地点全部解析一遍再动库：有一个不存在就整单 422，
         # 不能让前几个节点落库、后一个失败，留下半份路线。
         places = self._resolve_places(payload.nodes)
+        # 媒体引用也要先整体核验：有一个不可用就整单 422，不留半份路线。
+        self._check_media_assets(payload.nodes, owner_id)
         updated = self.repo.patch_cas(
             draft_id=draft_id,
             expected_version=if_match,
@@ -299,6 +302,9 @@ class RoutesService:
                     note=node.note,
                     price_min=node.price_min,
                     price_max=node.price_max,
+                    # 存字符串而不是 UUID 对象：JSON 列在 SQLite/PG 上都能直接序列化，
+                    # 读出来再转回 UUID，避免依赖驱动对 Uuid 的 JSON 支持。
+                    media_asset_ids=[str(asset_id) for asset_id in node.media_asset_ids],
                 )
                 for position, node in enumerate(payload.nodes, start=1)
             ],
@@ -345,6 +351,31 @@ class RoutesService:
                 )
             resolved[node.place_id] = place
         return resolved
+
+    def _check_media_assets(self, nodes: list[RouteNodeInput], owner_id: uuid.UUID) -> None:
+        """核验节点引用的媒体：存在、属于本人、且已扫描通过。
+
+        判定规则交给 media 模块的 require_referenceable，routes 不复制一份
+        「zone/scan_state 是否 clean」；别人的资产与不存在的资产给同一条提示，
+        避免有人拿 422 探出别人 asset ID 是否存在。
+        """
+        media = MediaService(self.db)
+        details: list[dict[str, str]] = []
+        for index, node in enumerate(nodes):
+            for asset_id in dict.fromkeys(node.media_asset_ids):
+                try:
+                    asset = media.require_referenceable(asset_id)
+                except (NotFound, Conflict):
+                    asset = None
+                if asset is None or asset.owner_id != owner_id:
+                    details.append(
+                        {
+                            "field": f"nodes.{index}.media_asset_ids",
+                            "reason": "媒体不存在、尚未通过扫描，或无权引用",
+                        }
+                    )
+        if details:
+            raise ValidationFailed("节点引用的媒体不可用", details=details)
 
     def _patch_values(self, payload: RouteDraftPatch) -> dict[str, Any]:
         """只把请求里真正出现的字段转成列更新；没出现的保持原值。"""
@@ -420,6 +451,8 @@ class RoutesService:
                     "note": node.note,
                     "price_min": node.price_min,
                     "price_max": node.price_max,
+                    # 换图也应改变内容指纹：审批要能区分「同一路线不同配图」。
+                    "media_asset_ids": [str(asset_id) for asset_id in (node.media_asset_ids or [])],
                 }
                 for node in self.repo.list_nodes(draft.id)
             ],
@@ -476,6 +509,7 @@ class RoutesService:
                     note=node.note,
                     price_min=node.price_min,
                     price_max=node.price_max,
+                    media_asset_ids=[uuid.UUID(raw) for raw in (node.media_asset_ids or [])],
                 )
             )
         base = RouteDraftOut.model_validate(draft)
