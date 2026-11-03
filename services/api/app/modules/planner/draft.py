@@ -15,12 +15,13 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Final, Protocol
 
-from app.core.errors import Conflict
+from app.core.errors import AppError, ServiceUnavailable
 from app.modules.planner.models import Itinerary, ItineraryDay, ItineraryItem
 
 TITLE_MAX: Final[int] = 60
@@ -30,6 +31,10 @@ STAY_MIN: Final[int] = 10
 STAY_MAX: Final[int] = 480
 MAX_THEMES: Final[int] = 8
 TRANSPORT_VALUES: Final[frozenset[str]] = frozenset({"walk", "metro", "bus", "taxi", "bike"})
+# 幂等键里带多少位内容摘要：够区分「改过」和「没改」，又不至于把 key 撑到 64 位上限。
+KEY_HASH_CHARS: Final[int] = 16
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -83,8 +88,12 @@ def draft_title(itinerary: Itinerary) -> str:
     """
     city = (itinerary.city or "未命名城市").strip() or "未命名城市"
     days = itinerary.days or 1
-    title = f"{city} {days} 天文化路线"
-    return title[:TITLE_MAX]
+    suffix = f" {days} 天文化路线"
+    room = TITLE_MAX - len(suffix)
+    if room < 1:  # 天数长到连后缀都放不下（理论上 days<=7，留着防以后放宽）
+        return suffix.strip()[:TITLE_MAX]
+    # 只砍城市名，后缀整段保留：直接 [:TITLE_MAX] 会把「文化路线」切成「文化」。
+    return f"{city[:room].rstrip()}{suffix}"
 
 
 def draft_summary(itinerary: Itinerary, nodes: Sequence[DraftNode]) -> str:
@@ -184,12 +193,21 @@ def draft_spec(itinerary: Itinerary, days: Iterable[ItineraryDay]) -> DraftSpec:
     )
 
 
-def routes_idempotency_key(plan_id: uuid.UUID) -> str:
-    """同一张行程反复点"生成草稿"，必须落到同一份草稿上。
+def routes_idempotency_key(plan_id: uuid.UUID, input_hash: str | None = None) -> str:
+    """同一份行程内容反复点「生成草稿」，必须落到同一份草稿上。
 
-    key 由行程 id 派生而不是用户随便传：用户换个 key 重试不该多出一份重复草稿。
+    只用 plan_id 不够：用户把行程改了内容再转草稿时，routes 那边会看到「同 key 不同内容」
+    并报 IDEMPOTENCY_KEY_REUSED（409），从用户角度就是「我改了方案，它却不让我转」。
+    把内容摘要截一段并进来，内容变了就是新 key，等于 fork 一份新草稿——
+    和必读1「改动 = fork 新草稿」是同一条规矩。
+
+    客户端 HTTP 头里的 Idempotency-Key 只负责网络重试级去重（同一请求别落两次），
+    业务上的「同一张行程只该有一份草稿」靠这把派生键，不靠用户传什么。
     """
-    return f"plan:{plan_id}"
+    base = f"plan:{plan_id}"
+    if not input_hash:
+        return base
+    return f"{base}:{input_hash[:KEY_HASH_CHARS]}"
 
 
 # ----- 真实适配器 -------------------------------------------------------------
@@ -212,10 +230,10 @@ class RoutesDraftPort:
         service = self._service()
         create = getattr(service, "create", None)
         if create is None:
-            raise Conflict(
+            raise ServiceUnavailable(
                 "路线模块还没就绪，暂时不能生成草稿",
                 code="ROUTES_UNAVAILABLE",
-                details=[{"field": "routes", "reason": "RT-01 尚未合入当前分支"}],
+                details=[{"field": "routes", "reason": "routes 模块没有提供 create"}],
             )
 
         from app.modules.routes.schemas import RouteDraftCreate
@@ -231,7 +249,7 @@ class RoutesDraftPort:
             return draft
         draft_id = getattr(draft, "id", None)
         if not isinstance(draft_id, uuid.UUID):
-            raise Conflict(
+            raise ServiceUnavailable(
                 "路线模块返回的草稿没有编号",
                 code="ROUTES_UNAVAILABLE",
                 details=[{"field": "routes", "reason": "返回值既不是 UUID 也没有 id 字段"}],
@@ -249,7 +267,7 @@ class RoutesDraftPort:
             return 1
         try:
             loaded = detail(draft_id=draft_id, owner_id=owner_id)
-        except Exception:  # 详情读失败不该让"转草稿"整体失败，节点可以重试
+        except AppError:  # 404/403 这类预期内的失败：草稿刚建，按版本 1 试一次
             return 1
         return int(getattr(loaded, "lock_version", 1) or 1)
 
@@ -274,6 +292,8 @@ class RoutesDraftPort:
         service = self._service()
         replace = getattr(service, "replace_nodes", None)
         if replace is None:
+            # 不静默：草稿建好了但节点没写进去，事后排查必须能从这里看出原因。
+            logger.warning("routes 模块没有 replace_nodes，节点未写入 draft=%s", draft_id)
             return
 
         from app.modules.routes.schemas import RouteNodeInput, RouteNodesReplace

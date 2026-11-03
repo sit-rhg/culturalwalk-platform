@@ -92,6 +92,18 @@ def catalog_place_source(db: Session) -> PlaceFactsSource:
     return load
 
 
+def _confidence_value(raw: Any) -> str:
+    """把 catalog 给的可信度统一成字符串。
+
+    catalog 现在存的是字符串；但如果哪天换成 StrEnum，`str(FactConfidence.VERIFIED)`
+    会得到 "FactConfidence.VERIFIED"，价格判断就会全部掉进「待核实」分支——
+    不报错，只是悄悄降级。这里先把枚举拆成 .value，别把这种事留给运气。
+    """
+    value = getattr(raw, "value", raw)
+    text = str(value or "").strip()
+    return text or UNVERIFIED
+
+
 def _to_view(detail: Any) -> PlaceView:
     """把 catalog 的详情对象转成本模块的轻量结构。
 
@@ -101,7 +113,7 @@ def _to_view(detail: Any) -> PlaceView:
     claims = tuple(
         ClaimView(
             claim=str(getattr(fact, "claim", "") or ""),
-            confidence=str(getattr(fact, "confidence", "") or UNVERIFIED),
+            confidence=_confidence_value(getattr(fact, "confidence", None)),
             source_urls=tuple(
                 str(url)
                 for source in (getattr(fact, "sources", None) or [])

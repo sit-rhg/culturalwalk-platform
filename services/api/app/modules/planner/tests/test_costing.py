@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
+from enum import StrEnum
 
 import pytest
 from fastapi.testclient import TestClient
@@ -25,7 +26,12 @@ from app.core.deps import create_access_token
 from app.main import create_app
 from app.modules.planner.agents.base import Candidate, PlaceSource, PlanContext
 from app.modules.planner.models import Itinerary, PlanState
-from app.modules.planner.place_facts import ClaimView, PlaceFactsSource, PlaceView
+from app.modules.planner.place_facts import (
+    ClaimView,
+    PlaceFactsSource,
+    PlaceView,
+    _confidence_value,
+)
 from app.modules.planner.pricing import (
     REASON_LIKELY,
     REASON_PLACE_MISSING,
@@ -238,6 +244,18 @@ def test_persist_plan_writes_days_items_and_prices(db: Session) -> None:
     assert item.start_time is not None and item.start_time.hour == 9
 
 
+def test_confidence_value_accepts_enum_and_plain_string() -> None:
+    """catalog 若把可信度换成 StrEnum，不能悄悄变成「待核实」。"""
+
+    class _Confidence(StrEnum):
+        VERIFIED = "verified"
+
+    assert _confidence_value(_Confidence.VERIFIED) == "verified"
+    assert _confidence_value(" verified ") == "verified"
+    assert _confidence_value(None) == "unverified"
+    assert _confidence_value("") == "unverified"
+
+
 def test_persist_plan_marks_missing_place_as_pending(db: Session) -> None:
     """点位查不到（资料缺失 / 还没发布）时必须标待核实，不能让这一项"看起来免费"。"""
     itinerary = _make_itinerary(db)
@@ -269,6 +287,27 @@ def test_persist_plan_replaces_previous_schedule(db: Session) -> None:
     days = service.repo.days_for_itinerary(itinerary.id)
     assert [day.day_index for day in days] == [1]
     assert len(days[0].items) == 1
+
+
+def test_persist_plan_rebuilds_items_so_ids_change(db: Session) -> None:
+    """重跑是「重建」不是「原地更新」：id 会变，内容一致。
+
+    这条钉住的是文档口径（persist_plan 的 docstring），免得有人拿 item.id 当外部引用。
+    """
+    itinerary = _make_itinerary(db)
+    service = PlannerService(db)
+    plan = _context(_schedule(1, str(uuid.uuid4())))
+
+    service.persist_plan(itinerary, plan, places=lambda _place_id: None)
+    db.flush()
+    first = service.repo.days_for_itinerary(itinerary.id)[0].items[0]
+
+    service.persist_plan(itinerary, plan, places=lambda _place_id: None)
+    db.flush()
+    second = service.repo.days_for_itinerary(itinerary.id)[0].items[0]
+
+    assert (first.order, first.stay_minutes) == (second.order, second.stay_minutes)
+    assert first.id != second.id
 
 
 def _run_single_plan(
