@@ -11,7 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.modules.identity.models import Session as LoginSession
 from app.modules.identity.models import User
-from app.modules.identity.schemas import RouteSummaryOut
+from app.modules.moderation.models import Publication, PublicationState
+from app.modules.routes.models import RouteDraft, RouteVersion
 
 
 class IdentityRepository:
@@ -26,15 +27,35 @@ class IdentityRepository:
     def get_user(self, user_id: uuid.UUID) -> User | None:
         return self.db.get(User, user_id)
 
-    def list_published_routes(self, user_id: uuid.UUID) -> list[RouteSummaryOut]:
-        """某个作者的已发布路线摘要。
+    def list_published_versions(
+        self, user_id: uuid.UUID
+    ) -> list[tuple[uuid.UUID, RouteVersion, datetime | None]]:
+        """某个作者「当前处于发布态」的路线版本，一行一条路线。
 
-        上游表还没落地：routes 模块的 routes / route_versions 要等 RT-01/RT-02
-        （现在 app/modules/routes/models.py 整段还是注释）。所以这里先返回空列表，
-        但签名、出参 DTO 和"只查已发布"的口径已经定死：表落地后只替换本函数体，
-        不改调用方、不改契约。别为了让它有返回值去 join 别的模块的表。
+        三个容易做错的地方：
+        1. 「已发布」只看 publications.state = PUBLISHED。不能用
+           route_versions.route_id 非空代替：发布时回填的 route_id 在下线后不会被
+           清空，用它当判据会让已下线的路线继续出现在主页上。
+        2. 发布接口保证同一 route 同时最多一条 PUBLISHED，但历史行可能还留着
+           UNPUBLISHED / ARCHIVED，所以 state 条件必须写进 where。
+        3. 跨模块直接读 moderation/routes 的 model：这两个模块都在顶层 import
+           identity.service，identity 反向 import 它们的 service 会成环。
+           等它们提供公开读服务后，把这段换成 service 调用并删掉这两个 import。
         """
-        return []
+        stmt = (
+            select(Publication.route_id, RouteVersion, Publication.published_at)
+            .join(RouteVersion, RouteVersion.id == Publication.version_id)
+            .join(RouteDraft, RouteDraft.id == RouteVersion.draft_id)
+            .where(
+                Publication.state == PublicationState.PUBLISHED,
+                RouteDraft.owner_id == user_id,
+            )
+            .order_by(
+                Publication.published_at.desc().nulls_last(),
+                Publication.route_id.desc(),
+            )
+        )
+        return [(row[0], row[1], row[2]) for row in self.db.execute(stmt)]
 
     def add_user(self, user: User) -> User:
         self.db.add(user)

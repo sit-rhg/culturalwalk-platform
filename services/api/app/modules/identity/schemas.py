@@ -83,6 +83,9 @@ class RouteSummaryOut(BaseModel):
 
     只有 summary / cover_url / duration_minutes 在契约里是 nullable，
     其余可选字段给非空默认值：宁可少给一个字段，也别回一个契约里没有的 null。
+
+    comment_count / favorite_count 同理：契约里它们是 integer 而不是 nullable，
+    评论与收藏的计数还拿不到真值时给 None，让 response_model_exclude_none 整个藏掉。
     """
 
     id: uuid.UUID
@@ -94,8 +97,8 @@ class RouteSummaryOut(BaseModel):
     theme_tags: list[str] = Field(default_factory=list)
     duration_minutes: int | None = None
     cost: CostSummaryOut | None = None
-    comment_count: int = 0
-    favorite_count: int = 0
+    comment_count: int | None = None
+    favorite_count: int | None = None
 
 
 class UserProfileOut(BaseModel):

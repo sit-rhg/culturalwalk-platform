@@ -36,7 +36,14 @@ from app.modules.identity.models import (
 )
 from app.modules.identity.models import Session as LoginSession
 from app.modules.identity.repository import IdentityRepository
-from app.modules.identity.schemas import RouteSummaryOut, UserOut, UserProfileOut
+from app.modules.identity.schemas import (
+    CostSummaryOut,
+    RouteAuthorOut,
+    RouteSummaryOut,
+    UserOut,
+    UserProfileOut,
+)
+from app.modules.routes.models import RouteVersion
 
 # 令牌类型：access 由 app.core.deps 校验，refresh 只在本模块校验
 TYP_ACCESS = "access"
@@ -188,8 +195,18 @@ class IdentityService:
             raise Unauthorized("登录已失效，请重新登录")
         return user
 
-    def list_published_routes(self, user_id: uuid.UUID) -> list[RouteSummaryOut]:
-        return self.repo.list_published_routes(user_id)
+    def published_route_summaries(self, user: User) -> list[RouteSummaryOut]:
+        """公开主页的路线卡片：取「当前发布态」的那一版快照来渲染。
+
+        发布态以 publications.state 为准（判据写在 repository 里）；卡片内容全部
+        来自冻结快照，不回头读草稿——草稿发布后还会被作者改，读它会让主页与线上
+        展示不一致。
+        """
+        author = RouteAuthorOut(id=user.id, username=user.username)
+        return [
+            _route_summary(route_id=route_id, version=version, author=author)
+            for route_id, version, _published_at in self.repo.list_published_versions(user.id)
+        ]
 
     def public_profile(self, user_id: uuid.UUID) -> UserProfileOut:
         """公开主页。契约只有 200/404，所以"不存在"和"已停用"都按 404 处理：
@@ -200,7 +217,7 @@ class IdentityService:
             raise NotFound("用户不存在")
         return UserProfileOut(
             user=UserOut.model_validate(user),
-            published_routes=self.list_published_routes(user.id),
+            published_routes=self.published_route_summaries(user),
         )
 
     # ===== 内部 =====
@@ -237,3 +254,81 @@ def _normalize_username(raw: str) -> str:
 def _normalize_email(raw: str | None) -> str | None:
     value = (raw or "").strip().lower()
     return value or None
+
+
+# ===== 公开主页的路线卡片 =====
+
+
+def _route_summary(
+    *, route_id: uuid.UUID, version: RouteVersion, author: RouteAuthorOut
+) -> RouteSummaryOut:
+    """把某一版冻结快照翻成契约里的 RouteSummary。
+
+    快照是冻结时写下的整份内容（routes.service._snapshot），字段可能因版本演进
+    缺少某些键，所以一律走宽松读取：缺了就不给，不在这里抛 KeyError。
+    """
+    snapshot = version.snapshot if isinstance(version.snapshot, dict) else {}
+    nodes = [node for node in snapshot.get("nodes") or [] if isinstance(node, dict)]
+    return RouteSummaryOut(
+        id=route_id,
+        title=str(snapshot.get("title") or ""),
+        channel="user",
+        summary=_optional_text(snapshot.get("summary")),
+        cover_url=None,
+        author=author,
+        theme_tags=_text_list(snapshot.get("theme_tags")),
+        duration_minutes=_optional_int(snapshot.get("duration_minutes")),
+        cost=_cost_summary(nodes),
+        # 评论/收藏的计数属于 community 模块，跨模块查表会把依赖方向搞反；
+        # 真值拿到之前整个字段不出现（路由上开了 exclude_none），不回 0 条。
+        comment_count=None,
+        favorite_count=None,
+    )
+
+
+def _optional_text(value: object) -> str | None:
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def _optional_int(value: object) -> int | None:
+    # bool 是 int 的子类：快照里真出现 true 时不能把它当成 1
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value)
+    return None
+
+
+def _text_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
+def _cost_summary(nodes: list[dict[str, Any]]) -> CostSummaryOut:
+    """按节点价格汇总；缺任一端计入 unknown_count，不按 0 计。
+
+    本地实现而不是复用 community 的 _cost_of：community.service 在顶层 import 了
+    本模块，反向 import 会成环。等 #119 的 app.core.costing.summarize_cost 合入后
+    改成调它，避免同一套规则散在多处。
+    """
+    lows: list[int] = []
+    highs: list[int] = []
+    unknown = 0
+    for node in nodes:
+        low = _optional_int(node.get("price_min"))
+        high = _optional_int(node.get("price_max"))
+        if low is not None:
+            lows.append(low)
+        if high is not None:
+            highs.append(high)
+        if low is None or high is None:
+            unknown += 1
+    return CostSummaryOut(
+        min_total=sum(lows),
+        max_total=sum(highs),
+        currency="CNY",
+        unknown_count=unknown,
+    )
