@@ -12,8 +12,6 @@
 
 from __future__ import annotations
 
-import base64
-import json
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -22,9 +20,17 @@ from typing import Any
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.costing import summarize_cost
 from app.core.deps import CurrentUser
 from app.core.errors import AppError, Forbidden, NotFound, Unauthorized, ValidationFailed
-from app.core.pagination import DEFAULT_LIMIT, MAX_LIMIT, decode_cursor, encode_cursor
+from app.core.pagination import (
+    DEFAULT_LIMIT,
+    MAX_LIMIT,
+    decode_cursor,
+    decode_payload,
+    encode_cursor,
+    encode_payload,
+)
 from app.modules.audit.service import AuditService
 from app.modules.catalog.service import CatalogService
 from app.modules.community.models import Comment, CommentStatus, Favorite
@@ -66,20 +72,17 @@ def _optional_str(value: Any) -> str | None:
 def _cost_of(snapshot: dict[str, Any]) -> CostSummaryOut:
     """按快照里各节点的已知价格求和；缺任一端的价格算 unknown，不按 0 计入。
 
-    与 routes 模块对草稿详情的口径一致：把缺失当 0 会让预算看起来比实际便宜。
+    口径统一在 `app.core.costing`，与 routes 的草稿详情共用，避免同一套规则两份实现。
     """
     nodes = [node for node in snapshot.get("nodes") or [] if isinstance(node, dict)]
-    unknown = sum(
-        1 for node in nodes if node.get("price_min") is None or node.get("price_max") is None
+    totals = summarize_cost(
+        (_optional_int(node.get("price_min")), _optional_int(node.get("price_max")))
+        for node in nodes
     )
     return CostSummaryOut(
-        min_total=sum(
-            int(node["price_min"]) for node in nodes if isinstance(node.get("price_min"), int)
-        ),
-        max_total=sum(
-            int(node["price_max"]) for node in nodes if isinstance(node.get("price_max"), int)
-        ),
-        unknown_count=unknown,
+        min_total=totals.min_total,
+        max_total=totals.max_total,
+        unknown_count=totals.unknown_count,
     )
 
 
@@ -112,27 +115,25 @@ def _actor_id(user: CurrentUser) -> uuid.UUID:
 
 
 def _encode_comment_cursor(comment: Comment) -> str:
-    """评论列表按「置顶 + 时间」排序，core 的两字段游标装不下 pinned，单独编一份。
+    """评论列表按「置顶 + 时间」排序，比默认两字段多一个 pinned。
 
-    游标对前端不透明（docs/03 §1.5），字段是内部约定；改排序时要同步改解码。
+    编码格式与错误码仍走 core，模块里不再自己抄 base64；
+    游标对前端不透明（docs/03 §1.5），改排序时要同步改解码。
     """
-    raw = json.dumps(
+    return encode_payload(
         {
             "p": bool(comment.pinned),
             "c": _as_utc(comment.created_at).isoformat(),
             "i": str(comment.id),
-        },
-        separators=(",", ":"),
+        }
     )
-    return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
 
 
 def _decode_comment_cursor(cursor: str) -> CommentPosition:
-    padded = cursor + "=" * (-len(cursor) % 4)
+    data = decode_payload(cursor)
     try:
-        data = json.loads(base64.urlsafe_b64decode(padded))
         return bool(data["p"]), datetime.fromisoformat(data["c"]), uuid.UUID(str(data["i"]))
-    except (KeyError, TypeError, ValueError) as exc:  # base64/JSON/时间/ID 任一坏掉
+    except (KeyError, TypeError, ValueError) as exc:  # 字段缺失或时间/ID 格式坏掉
         raise AppError("分页游标无效", code="INVALID_CURSOR") from exc
 
 
