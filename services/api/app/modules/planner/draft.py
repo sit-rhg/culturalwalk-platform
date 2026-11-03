@@ -238,6 +238,21 @@ class RoutesDraftPort:
             )
         return draft_id
 
+    def _lock_version_of(self, service: object, *, draft_id: uuid.UUID, owner_id: uuid.UUID) -> int:
+        """读草稿当前版本号，给 replace_nodes 的 if_match 用。
+
+        不写死 1：重放或用户改过标题之后 lock_version 会变，拿旧值会被判成 412；
+        读不到就退回 1——新建草稿本来就是 1，这时猜也不会错。
+        """
+        detail = getattr(service, "get_detail", None)
+        if detail is None:
+            return 1
+        try:
+            loaded = detail(draft_id=draft_id, owner_id=owner_id)
+        except Exception:  # 详情读失败不该让"转草稿"整体失败，节点可以重试
+            return 1
+        return int(getattr(loaded, "lock_version", 1) or 1)
+
     def replace_nodes(
         self,
         *,
@@ -246,29 +261,41 @@ class RoutesDraftPort:
         nodes: Sequence[DraftNode],
         idempotency_key: str,
     ) -> None:
-        """写节点（RT-02 的 PUT /route-drafts/{id}/nodes）。
+        """把节点按映射出来的顺序写进草稿（RT-02 的 PUT /route-drafts/{id}/nodes）。
 
-        对方还没提供这个方法就静默跳过：本卡验收的是"草稿能建出来 + 顺序来源有映射"，
-        节点落库等 RT-02 落地后在这里接上，不需要改 planner 的其它代码。
+        RT-02 的真实签名是 replace_nodes(
+            *, draft_id, owner_id, payload: RouteNodesReplace, if_match, idempotency_key)
+        所以要显式给 payload（整表替换）和 if_match（乐观锁版本）。
+        顺序就是数组下标：nodes 已按「天 → order」排好，这里原样传、不再重排——
+        重排会直接改掉卡面验收的「节点顺序与来源保留」。
+
+        对方没提供这个方法时静默跳过，RT-02 落地后自动接通（有用例钉住真实链路）。
         """
         service = self._service()
         replace = getattr(service, "replace_nodes", None)
         if replace is None:
             return
+
+        from app.modules.routes.schemas import RouteNodeInput, RouteNodesReplace
+
+        payload = RouteNodesReplace(
+            nodes=[
+                RouteNodeInput(
+                    place_id=node.place_id,
+                    stay_minutes=node.stay_minutes,
+                    transport=node.transport,  # type: ignore[arg-type]
+                    note=node.note,
+                    price_min=node.price_min,
+                    price_max=node.price_max,
+                )
+                for node in nodes
+            ]
+        )
         replace(
             draft_id=draft_id,
             owner_id=owner_id,
-            nodes=[
-                {
-                    "place_id": str(node.place_id),
-                    "stay_minutes": node.stay_minutes,
-                    "transport": node.transport,
-                    "price_min": node.price_min,
-                    "price_max": node.price_max,
-                    "note": node.note,
-                }
-                for node in nodes
-            ],
+            payload=payload,
+            if_match=self._lock_version_of(service, draft_id=draft_id, owner_id=owner_id),
             idempotency_key=idempotency_key,
         )
 
