@@ -10,11 +10,13 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.modules.audit.models import AuditLog
 from app.modules.catalog.models import Place, PlaceStatus
 from app.modules.community.models import Comment, Favorite
+from app.modules.moderation.models import Publication, PublicationState
 from app.modules.routes.models import RouteDraft, RouteVersion
 
 # 与 conftest 种的两个账号一致（conftest 里是字符串常量，这里用 UUID 方便落库）
@@ -87,7 +89,7 @@ def _published_route(
     price_min: int | None = 1000,
     price_max: int | None = 2000,
 ) -> uuid.UUID:
-    """造一条「已发布」路线：发布态用 route_versions.route_id 非空来代表。"""
+    """造一条「已发布」路线：版本 + 一条 PUBLISHED 发布记录（真实发布流程的形状）。"""
     tags = theme_tags or ["历史"]
     draft = RouteDraft(
         owner_id=author_id,
@@ -99,22 +101,33 @@ def _published_route(
     db.add(draft)
     db.flush()
     route_id = uuid.uuid4()
+    version = RouteVersion(
+        route_id=route_id,
+        draft_id=draft.id,
+        version_no=1,
+        snapshot=_snapshot(
+            title=title,
+            theme_tags=tags,
+            duration_minutes=duration_minutes,
+            place_id=place_id,
+            price_min=price_min,
+            price_max=price_max,
+        ),
+        content_hash="a" * 64,
+        created_by=author_id,
+        created_at=published_at or datetime.now(UTC),
+    )
+    db.add(version)
+    db.flush()
     db.add(
-        RouteVersion(
+        Publication(
+            submission_id=uuid.uuid4(),
             route_id=route_id,
-            draft_id=draft.id,
-            version_no=1,
-            snapshot=_snapshot(
-                title=title,
-                theme_tags=tags,
-                duration_minutes=duration_minutes,
-                place_id=place_id,
-                price_min=price_min,
-                price_max=price_max,
-            ),
-            content_hash="a" * 64,
-            created_by=author_id,
-            created_at=published_at or datetime.now(UTC),
+            version_id=version.id,
+            content_hash=version.content_hash,
+            state=PublicationState.PUBLISHED,
+            published_by=author_id,
+            published_at=version.created_at,
         )
     )
     db.commit()
@@ -181,6 +194,22 @@ def test_public_list_only_returns_published(client: TestClient, db_session: Sess
     # 草稿不属于任何 route：用它自己的 id 查详情，和随便一个 UUID 一样 404。
     assert client.get(f"{ROUTES_API}/{draft_id}").status_code == 404
     assert client.get(f"{ROUTES_API}/{uuid.uuid4()}").status_code == 404
+
+
+def test_unpublished_route_is_not_public(client: TestClient, db_session: Session) -> None:
+    """下线只改 publications.state；版本行的 route_id 仍留着，不能据此继续公开。"""
+    alive = _published_route(db_session, title="还在线")
+    gone = _published_route(db_session, title="已经下线")
+    publication = db_session.execute(
+        select(Publication).where(Publication.route_id == gone)
+    ).scalar_one()
+    publication.state = PublicationState.UNPUBLISHED
+    db_session.commit()
+
+    body = client.get(ROUTES_API).json()
+
+    assert [item["id"] for item in body["items"]] == [str(alive)]
+    assert client.get(f"{ROUTES_API}/{gone}").status_code == 404
 
 
 def test_list_filters(client: TestClient, db_session: Session) -> None:
