@@ -21,10 +21,7 @@ METHODS = ("get", "post", "put", "patch", "delete")
 
 # 契约里有、服务端确实还没挂的。这是欠账清单，不是白名单：
 # 谁把它实现了，test_known_gaps_are_still_missing 就会要求从这里删掉那一行。
-KNOWN_GAPS: dict[tuple[str, str], str] = {
-    ("/plans", "get"): "行程列表：planner 只实现了提交与详情，列表还是契约先行",
-    ("/plans/{plan_id}", "delete"): "删除行程：同上",
-}
+KNOWN_GAPS: dict[tuple[str, str], str] = {}
 
 
 def _contract_ops() -> dict[str, set[str]]:

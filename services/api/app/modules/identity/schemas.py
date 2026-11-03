@@ -78,13 +78,6 @@ class ProfileRouteOut(BaseModel):
     duration_minutes: int | None = None
 
 
-class UserProfileOut(BaseModel):
-    """openapi.yaml#UserProfile。user 用 UserOut（不含 email），公开主页不返回敏感字段。"""
-
-    user: UserOut
-    published_routes: list[ProfileRouteOut] = Field(default_factory=list)
-
-
 class TokenPairOut(BaseModel):
     """openapi.yaml#TokenPair。user 必带，expires_in 可选（这里给实际值）。"""
 
@@ -138,5 +131,5 @@ class UserProfileOut(BaseModel):
     """
 
     user: UserOut
-    published_routes: list[RouteSummaryOut]
+    published_routes: list[ProfileRouteOut]
     comment_count: int | None = None
