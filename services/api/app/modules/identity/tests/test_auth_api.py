@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -16,10 +17,10 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import create_access_token
 from app.core.errors import Conflict
-from app.modules.identity.models import STATUS_DISABLED, User
+from app.modules.identity.models import STATUS_DISABLED, User, utcnow
 from app.modules.identity.models import Session as LoginSession
 from app.modules.identity.repository import IdentityRepository
-from app.modules.identity.service import IdentityService
+from app.modules.identity.service import IdentityService, decode_refresh_token, hash_refresh_token
 
 REGISTER = "/api/v1/auth/register"
 LOGIN = "/api/v1/auth/login"
@@ -127,6 +128,35 @@ def test_refresh_issues_new_pair_and_drops_the_old_token(client: TestClient) -> 
     again = client.post(REFRESH, json={"refresh_token": old["refresh_token"]})
     assert again.status_code == 401
     assert again.json()["error"]["code"] == "UNAUTHORIZED"
+
+
+def test_refresh_race_loses_at_the_conditional_revoke(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """并发轮换的回归用例：即使读到的是"未撤销"快照，也必须被条件更新拦下。
+
+    TestClient 是串行的，造不出真并发；所以把 service 读到的会话换成撤销发生之前的快照，
+    让读路径（revoked_at 为空、摘要匹配、未过期）全部放行——此时唯一能拦住第二次兑换的
+    就是 revoke_if_active 的那条 WHERE revoked_at IS NULL。没有这个修复，这里会换出第二条会话。
+    """
+    tokens = _register(client, username="ming")
+    old_refresh = tokens["refresh_token"]
+    user_id, session_id = decode_refresh_token(old_refresh)
+
+    first = client.post(REFRESH, json={"refresh_token": old_refresh})
+    assert first.status_code == 200, first.text
+
+    stale = LoginSession(
+        id=session_id,
+        user_id=user_id,
+        refresh_hash=hash_refresh_token(old_refresh),
+        expires_at=utcnow() + timedelta(minutes=5),
+    )
+    monkeypatch.setattr(IdentityRepository, "get_session", lambda self, _sid: stale)
+
+    second = client.post(REFRESH, json={"refresh_token": old_refresh})
+    assert second.status_code == 401, second.text
+    assert second.json()["error"]["code"] == "UNAUTHORIZED"
 
 
 def test_logout_needs_no_body_and_revokes_current_session(client: TestClient) -> None:

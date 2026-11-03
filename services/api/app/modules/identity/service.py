@@ -157,17 +157,23 @@ class IdentityService:
         user = self.repo.get_user(user_id)
         if user is None or user.status != STATUS_ACTIVE:
             raise Unauthorized("登录已失效，请重新登录")
-        # 轮换：旧会话当场作废，泄漏的旧 refresh 令牌不能一直换得下去
-        self.repo.revoke(session, now)
+        # 轮换：旧会话当场作废，泄漏的旧 refresh 令牌不能一直换得下去。
+        # 用条件更新而不是"读-判-写"：上面那次 get_session 只是读快照，
+        # 两个并发请求可能都拿到 revoked_at 为空的那一份，唯一能拦住第二个的就是这条 SQL。
+        if not self.repo.revoke_if_active(session.id, now):
+            raise Unauthorized("登录已失效，请重新登录")
         return self._issue(user)
 
     def logout(self, *, user_id: uuid.UUID, session_id: uuid.UUID | None = None) -> int:
         """退出登录：按 access 令牌里的 sid 撤销**本次**会话。
 
-        契约的 /auth/logout 没有请求体，所以定位会话只能靠 access 令牌自带的 sid；
-        没有 sid 的老令牌退回"撤销该用户全部未撤销会话"，响应仍是 204。
+        契约的 /auth/logout 没有请求体，所以定位会话只能靠 access 令牌自带的 sid。
         会话不存在或不属于本人时返回 0 且不报错：退出是幂等的，重复调用仍 204。
         返回被撤销的会话数，给测试和审计留个可断言的返回值。
+
+        兜底（有意为之，需要知道）：没有 sid 的 access 令牌会撤销该用户**全部**未撤销
+        会话——多设备会一起下线。当前只有 ID-02 之前签发的令牌没有 sid，等令牌全面带
+        sid 之后应当收紧成"只退本次"，或者干脆按 401 处理。
         """
         now = utcnow()
         if session_id is None:
