@@ -22,30 +22,32 @@ beforeAll(async () => {
 })
 
 describe('真接口模式：只有后端已实现的功能才走 api', () => {
-  it('待实现功能 supports 为 false，并给出等待的接口', () => {
-    expect(real.supports('profile')).toBe(false)
-    expect(real.supports('reviewQueue')).toBe(false)
-    expect(real.supports('routeList')).toBe(false)
-    expect(real.supports('routeDetail')).toBe(false)
-    expect(real.supports('comments')).toBe(false)
-    expect(real.supports('draftSubmit')).toBe(false)
-    expect(real.supports('notificationRead')).toBe(false)
-    expect(real.supports('favorite')).toBe(false)
+  it('已接好的功能全部 supports 为 true', () => {
+    expect(real.supports('reviewQueue')).toBe(true)
+    expect(real.supports('routeList')).toBe(true)
+    expect(real.supports('routeDetail')).toBe(true)
+    expect(real.supports('comments')).toBe(true)
+    expect(real.supports('draftSubmit')).toBe(true)
+    expect(real.supports('notificationRead')).toBe(true)
+    expect(real.supports('favorite')).toBe(true)
   })
 
-  it('提示里带具体接口和路径参数，方便对照后端进度', () => {
-    expect(real.pendingEndpoint('profile')).toContain('GET /users/')
-    expect(real.pendingEndpoint('reviewQueue')).toContain('GET /review/tasks')
-    expect(real.pendingEndpoint('draftSubmit')).toBe('POST /route-drafts/{id}/submit')
-    expect(real.isDemo('routeDetail')).toBe(true)
+  it('个人主页聚合已接真接口，清单里不再有等待中的端点', () => {
+    expect(real.supports('profile')).toBe(true)
+    expect(real.pendingEndpoint('profile')).toBeNull()
+    expect(real.isDemo('profile')).toBe(false)
+    // 所有功能都不该再挂着「演示数据」提示
+    for (const f of ['profile', 'routeDetail', 'reviewQueue', 'notificationRead'] as const) {
+      expect(real.isDemo(f)).toBe(false)
+    }
   })
 })
 
 describe('mock 模式：所有页面都能演示', () => {
-  it('未实现功能在 mock 下 supports 为 true，页面照常拿演示数据', () => {
+  it('mock 模式下全部功能 supports 为 true，页面照常拿演示数据', () => {
     expect(mocked.supports('profile')).toBe(true)
     expect(mocked.supports('reviewQueue')).toBe(true)
-    // 演示提示仍然要在：它描述的是「接口没接」，和当前跑在哪种模式无关
-    expect(mocked.isDemo('profile')).toBe(true)
+    // 演示提示由 isDemo 决定（跟着接口实现状态走），不跟运行模式走
+    expect(mocked.isDemo('profile')).toBe(false)
   })
 })

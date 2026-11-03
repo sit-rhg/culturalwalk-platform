@@ -120,7 +120,7 @@ describe('decisionBlockedReason', () => {
   const cases: Array<[ReviewDecision | null, string, string]> = [
     ['request_changes', '', '退回必须写理由'],
     ['request_changes', '   ', '退回必须写理由'],
-    ['request_changes', '请补上开放时间', ''],
+    ['request_changes', '请补上开放时间与票价说明', ''],
     ['approve', '', ''],
     [null, '', ''],
   ]

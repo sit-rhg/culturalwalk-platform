@@ -49,8 +49,14 @@ describe('退回必须写理由', () => {
     expect(decisionBlockedReason('request_changes', '')).toBe('退回必须写理由')
   })
 
-  it('退回写了理由就放行', () => {
-    expect(decisionBlockedReason('request_changes', '文化说明缺来源')).toBe('')
+  it('理由长度 1-9 字会被后端 422，页面先拦', () => {
+    expect(decisionBlockedReason('request_changes', '文化说明缺来源')).toBe('理由至少写 10 个字')
+    expect(decisionBlockedReason('approve', '再改改')).toBe('理由至少写 10 个字')
+  })
+
+  it('理由够 10 字就放行', () => {
+    expect(decisionBlockedReason('request_changes', '文化说明缺来源，补两条官方资料')).toBe('')
+    expect(decisionBlockedReason('approve', '内容无误，可以正式发布啦')).toBe('')
   })
 
   it('还没选动作时不拦（弹窗刚打开）', () => {

@@ -1,8 +1,9 @@
 /**
  * 真接口模式（VITE_USE_MOCK=false）下的页面冒烟。
  *
- * 目的：接口没实现的页面切到真接口后不能白屏，也要明确告诉用户这是演示数据。
- * 这里只渲染第一帧（SSR 不跑 onMounted），所以断言集中在标题、演示提示和静态区块上。
+ * 目的：切真之后页面不能白屏，也不能再挂着「演示数据」提示。
+ * 这里只渲染第一帧（SSR 不跑 onMounted），所以断言集中在标题与静态区块上；
+ * 数据路径由 `endpoints.spec.ts` 用真实形状的假响应覆盖。
  */
 import type { Component } from 'vue'
 import { describe, expect, it, vi } from 'vitest'
@@ -47,49 +48,54 @@ async function render(page: Component, path = '/'): Promise<string> {
   return renderToString(app)
 }
 
-describe('真接口模式：未实现接口的页面保留演示数据并给出提示', () => {
-  it('发现页：路线列表未接，顶部有灰字提示', async () => {
+describe('真接口模式：已接好的页面不再出现演示提示', () => {
+  it('发现页：列表与筛选都走真接口', async () => {
     const { default: Browse } = await import('@/pages/browse/index.vue')
     const html = await render(Browse)
 
-    expect(html).toContain(NOTICE)
-    expect(html).toContain('GET /routes')
+    expect(html).toContain('发现')
+    expect(html).not.toContain(NOTICE)
+    // 首帧在加载中，应该是骨架屏而不是空白或错误
+    expect(html).toContain('skeleton')
   })
 
-  it('路线详情页：详情与收藏都未接，提示里写清等待的接口', async () => {
+  it('路线详情页：详情、收藏、评论都走真接口', async () => {
     const { default: RouteDetail } = await import('@/pages/route-detail/index.vue')
     const html = await render(RouteDetail, '/routes/r-001')
 
-    expect(html).toContain(NOTICE)
-    expect(html).toContain('GET /routes/{id}')
+    // 真接口模式下首屏是骨架屏，数据到位才渲染节点
+    expect(html).toContain('route-detail')
+    expect(html).not.toContain(NOTICE)
+    expect(html).not.toContain('GET /routes/{id}')
   })
 
-  it('提交页：草稿列表走真接口，送审动作还是演示', async () => {
+  it('提交页：草稿列表、送审、撤回都走真接口', async () => {
     const { default: Submit } = await import('@/pages/submit/index.vue')
     const html = await render(Submit, '/submit')
 
     expect(html).toContain('我的路线')
-    expect(html).toContain(NOTICE)
-    expect(html).toContain('POST /route-drafts/{id}/submit')
+    expect(html).not.toContain(NOTICE)
+    expect(html).not.toContain('POST /route-drafts')
   })
 
-  it('审核后台：审核通知走真接口，任务队列仍是演示', async () => {
+  it('审核后台：任务队列、领取、裁决都走真接口', async () => {
     const { default: Admin } = await import('@/pages/admin/index.vue')
     const html = await render(Admin, '/admin')
 
     // 已登录 admin 不该再看到权限拦截
     expect(html).not.toContain('需要审核权限')
     expect(html).toContain('审核通知')
-    expect(html).toContain(NOTICE)
-    expect(html).toContain('GET /review/tasks')
+    expect(html).not.toContain(NOTICE)
+    expect(html).not.toContain('GET /review/tasks')
   })
 
-  it('我的主页：账号与通知走真接口，主页聚合还是演示', async () => {
+  it('我的主页：通知已读与个人主页聚合都走真接口，不再挂演示提示', async () => {
     const { default: Me } = await import('@/pages/me/index.vue')
     const html = await render(Me, '/me')
 
     expect(html).toContain('已发布路线')
-    expect(html).toContain(NOTICE)
-    expect(html).toContain('GET /users/')
+    expect(html).not.toContain(NOTICE)
+    expect(html).not.toContain('GET /users/')
+    expect(html).not.toContain('标记已读接口未接入')
   })
 })

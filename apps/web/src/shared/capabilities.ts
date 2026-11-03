@@ -23,8 +23,7 @@ export type Feature =
 
 /** null = 已实现；字符串 = 还在等这个接口（注释里写清楚等哪个） */
 const PENDING: Record<Feature, string | null> = {
-  // identity/router.py 里这个端点整段被注释掉了，请求会 404，先留演示数据兜底
-  profile: 'GET /users/{user_id}/profile',
+  profile: null,
   reviewQueue: null,
   routeList: null,
   routeDetail: null,

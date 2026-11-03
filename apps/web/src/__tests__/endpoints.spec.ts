@@ -214,7 +214,7 @@ describe('审核后台：队列 / 认领 / 裁决', () => {
   })
 
   it('裁决把页面上的 note 翻译成后端的 reason，通过时省略 reason', async () => {
-    fetchMock.mockResolvedValue(jsonResponse(200, { id: 't-1', state: 'COMPLETED' }))
+    fetchMock.mockImplementation(() => jsonResponse(200, { id: 't-1', state: 'COMPLETED' }))
 
     await endpoints.decideReviewTask('t-1', 'request_changes', '文化说明缺来源，补两条官方资料')
     expect(bodyOf()).toEqual({
@@ -279,11 +279,28 @@ describe('我的主页：通知已读与个人聚合', () => {
     expect(updated.read_at).toBeTruthy()
   })
 
-  it('个人主页接口还没实现，fetchUserProfile 用演示数据兜底', async () => {
+  it('个人主页走真接口 GET /users/{id}/profile，并映射成视图模型', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, {
+        user: { id: 'u-1', username: '小周', role: 'user', bio: '爱走老街' },
+        published_routes: [
+          {
+            id: 'r-1',
+            title: '老城文脉',
+            summary: '',
+            state: 'PUBLISHED',
+            node_count: 3,
+            favorite_count: 0,
+          },
+        ],
+        comment_count: 2,
+      }),
+    )
+
     const profile = await endpoints.fetchUserProfile('u-1')
 
-    expect(profile.published_routes).toBeInstanceOf(Array)
-    // 走了演示分支，没有发真请求
-    expect(fetchMock).not.toHaveBeenCalled()
+    expect(urlOf()).toBe('/api/v1/users/u-1/profile')
+    expect(profile.user.username).toBe('小周')
+    expect(profile.published_routes).toHaveLength(1)
   })
 })

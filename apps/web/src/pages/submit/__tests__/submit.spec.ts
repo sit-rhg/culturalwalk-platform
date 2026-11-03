@@ -4,9 +4,11 @@ import type { Schemas } from '@/api/types'
 
 import {
   canSubmit,
+  canWithdraw,
   draftCostLabel,
   latestReviewReason,
   markSubmitted,
+  markWithdrawn,
   nodeCountLabel,
   stateTone,
   submitButtonLabel,
@@ -50,6 +52,21 @@ describe('FE-06 提交审核卡片', () => {
     expect(next[1].state).toBe('EDITING')
     expect(input[0].state).toBe('EDITING')
     expect(input[0].title).toBe('草稿 d-001')
+  })
+
+  it('只有审核中的草稿能撤回，撤回后回到可编辑', () => {
+    expect(canWithdraw('SUBMITTED_LOCKED')).toBe(true)
+    expect(canWithdraw('EDITING')).toBe(false)
+    expect(canWithdraw('APPROVED_LOCKED')).toBe(false)
+    expect(canWithdraw('ARCHIVED')).toBe(false)
+
+    const input = [draft('d-001', 'SUBMITTED_LOCKED'), draft('d-002', 'APPROVED_LOCKED')]
+    const next = markWithdrawn(input, 'd-001')
+
+    expect(next).not.toBe(input)
+    expect(next[0].state).toBe('EDITING')
+    expect(next[1].state).toBe('APPROVED_LOCKED')
+    expect(input[0].state).toBe('SUBMITTED_LOCKED')
   })
 
   it('退回理由取最近一条 review_request_changes 的 payload.reason', () => {

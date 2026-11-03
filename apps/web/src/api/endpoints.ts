@@ -98,5 +98,5 @@ export async function markNotificationRead(notification: { id?: string; read_at?
 
 /** 用户主页：后端 `identity/router.py` 的端点被注释掉了（404），暂时仍由演示数据兜底。 */
 export async function fetchUserProfile(userId: string): Promise<UserProfile> {
-  return api.mock.get<UserProfile>(`/users/${seg(userId)}/profile`)
+  return api.get<UserProfile>(`/users/${seg(userId)}/profile`)
 }
