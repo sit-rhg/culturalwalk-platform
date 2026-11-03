@@ -1,8 +1,9 @@
 # ID-04：用户公开主页的接口测试
-"""钉住四件事：匿名可看、只露公开字段、已发布口径与社区一致、不存在/停用都 404。
+"""钉住四件事：匿名可看、只露公开字段、已发布口径、不存在/停用都 404。
 
-「已发布」沿用 community 的判定（route_versions.route_id 非空），所以这里直接
-造 route_drafts + route_versions 两行，不经过发布流程。
+「已发布」以 publications.state = PUBLISHED 为准（发布接口会写这一行）。
+不能只看 route_versions.route_id 非空：下线只改 publications.state，route_id 会
+一直留在版本行上，用它当判据会让已下线的路线继续挂在公开主页。
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.modules.identity.models import STATUS_DISABLED
+from app.modules.moderation.models import Publication, PublicationState
 from app.modules.routes.models import DraftState, RouteDraft, RouteVersion
 
 # 与 conftest 种的两个账号一致（conftest 里是字符串常量，这里用 UUID 方便落库）
@@ -31,7 +33,13 @@ def _published_route(
     summary: str = "从书院走到山顶",
     route_id: uuid.UUID | None = None,
     created_at: datetime | None = None,
+    publication_state: PublicationState | None = PublicationState.PUBLISHED,
 ) -> RouteVersion:
+    """造一条冻结过的路线；给了 route_id 就同时写一条发布记录。
+
+    publication_state=None 表示「有版本、没发布」，传 UNPUBLISHED 表示发过又下线——
+    后两种都不该出现在公开主页上。
+    """
     draft = RouteDraft(
         owner_id=owner_id,
         title=title,
@@ -59,6 +67,19 @@ def _published_route(
     )
     db.add(version)
     db.flush()
+    if route_id is not None and publication_state is not None:
+        db.add(
+            Publication(
+                submission_id=uuid.uuid4(),
+                route_id=route_id,
+                version_id=version.id,
+                content_hash=version.content_hash,
+                state=publication_state,
+                published_by=owner_id,
+                published_at=created_at or datetime(2026, 1, 1, tzinfo=UTC),
+            )
+        )
+        db.flush()
     return version
 
 
@@ -116,6 +137,25 @@ def test_每条路线只返回最新版本(client: TestClient, db_session: Sessi
     body = client.get(f"{API}/{USER_ID}/profile").json()
     assert [item["id"] for item in body["published_routes"]] == [str(first_id)]
     assert body["published_routes"][0]["title"] == "新标题"
+
+
+def test_已下线的路线不出现在主页(client: TestClient, db_session: Session) -> None:
+    """下线只改 publications.state，route_id 还留在版本上——不能凭它判断可见性。"""
+    gone_id = uuid.uuid4()
+    _published_route(
+        db_session,
+        owner_id=USER_ID,
+        title="已经下线",
+        route_id=gone_id,
+        publication_state=PublicationState.UNPUBLISHED,
+    )
+    alive_id = uuid.uuid4()
+    _published_route(db_session, owner_id=USER_ID, title="还在线", route_id=alive_id)
+    db_session.commit()
+
+    body = client.get(f"{API}/{USER_ID}/profile").json()
+
+    assert [item["id"] for item in body["published_routes"]] == [str(alive_id)]
 
 
 def test_不存在的用户返回404(client: TestClient) -> None:
