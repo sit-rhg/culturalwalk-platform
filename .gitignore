@@ -62,3 +62,10 @@ pip-modern-metadata-*/
 pip-unpack-*/
 pip-*/
 .tmp/
+services/api/api.log
+services/api/worker.log
+services/api/*.log
+demo.db
+services/api/demo.db
+pytest-of-*/
+**/pytest-of-*/
