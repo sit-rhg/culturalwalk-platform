@@ -93,7 +93,10 @@ def test_snapshot_lists_nodes_in_position_order(db_session: Session) -> None:
 
     positions = [node["position"] for node in version.snapshot["nodes"]]
     assert positions == [1, 2, 3]
+    # channel 是 0011 起进快照的字段：来源（官方/用户投稿）属于内容的一部分，
+    # 改来源要像改标题一样重新走审核，所以它必须参与快照和 hash。
     assert set(version.snapshot) == {
+        "channel",
         "title",
         "summary",
         "theme_tags",

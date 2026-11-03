@@ -4,12 +4,12 @@
 import { computed, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { ApiError } from '@/shared/api'
+import { ApiError, USE_MOCK } from '@/shared/api'
 import { currentUser, isLoggedIn, login, logout, register } from '@/shared/session'
 
 import {
-  DEMO_ACCOUNTS,
   authErrorText,
+  demoAccounts,
   redirectTarget,
   validateLogin,
   validateRegister,
@@ -35,6 +35,9 @@ const submitLabel = computed(() => {
   if (submitting.value) return tab.value === 'login' ? '登录中…' : '注册中…'
   return tab.value === 'login' ? '登录' : '注册'
 })
+
+// 假数据模式和真后端的演示账号是两套，点错了必然“登录已失效”。
+const accounts = computed(() => demoAccounts(USE_MOCK))
 
 function clearErrors(): void {
   formError.value = ''
@@ -175,10 +178,12 @@ async function onLogout(): Promise<void> {
 
     <div v-if="!isLoggedIn" class="card">
       <p class="section-title">演示账号</p>
-      <p class="muted">密码都是 cw123456，点一下自动填入表单。</p>
+      <p class="muted">
+        密码都是 {{ accounts[0]?.password }}，点一下自动填入表单。
+      </p>
       <div class="stack">
         <button
-          v-for="account in DEMO_ACCOUNTS"
+          v-for="account in accounts"
           :key="account.username"
           class="btn ghost small"
           type="button"

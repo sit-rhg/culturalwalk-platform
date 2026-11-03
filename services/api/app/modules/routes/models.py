@@ -92,6 +92,9 @@ class RouteDraft(Base):
         JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list
     )
     duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 来源通道：official=平台精选（编辑自建），user=用户投稿。
+    # 发现页的「来源」筛选直接读这一列，不再靠作者身份猜。
+    channel: Mapped[str] = mapped_column(String(10), nullable=False, default="user")
     state: Mapped[DraftState] = mapped_column(
         _stored_enum(DraftState, length=20), nullable=False, default=DraftState.EDITING
     )

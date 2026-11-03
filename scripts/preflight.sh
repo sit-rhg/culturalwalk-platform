@@ -56,6 +56,25 @@ if ! command -v node >/dev/null 2>&1 && [ -n "$NODE_BIN" ]; then
   export PATH="$(dirname "$NODE_BIN"):$PATH"
 fi
 
+# ---- 找 python -------------------------------------------------------------
+# 别直接用 PATH 里的 python：Windows 上它常常是应用商店的占位程序（一跑就弹
+# “Python was not found”），于是 lint/测试/契约自检全部误报失败。
+# 顺序：仓库内虚拟环境 → PATH 里的 python → python3。
+PY_BIN=""
+for cand in "$ROOT/services/api/.venv/Scripts/python.exe" "$ROOT/services/api/.venv/bin/python"; do
+  [ -x "$cand" ] && PY_BIN="$cand" && break
+done
+if [ -z "$PY_BIN" ]; then
+  PY_BIN="$(command -v python 2>/dev/null || command -v python3 2>/dev/null || true)"
+fi
+if [ -z "$PY_BIN" ]; then
+  echo "找不到 python。先建虚拟环境："
+  echo "  cd services/api && python -m venv .venv && .venv/Scripts/pip install -r requirements-dev.txt"
+  exit 2
+fi
+export PY_BIN
+echo "python: $PY_BIN"
+
 pnpm_run() { "${PNPM_CMD[@]}" "$@"; }
 
 # ---- 跑检查 ---------------------------------------------------------------
@@ -73,8 +92,8 @@ run() { # run <名字> <命令...>
 }
 
 if [[ "$SCOPE" == "all" || "$SCOPE" == "api" ]]; then
-  run "后端 lint"      bash -c 'cd services/api && ruff check . && ruff format --check .'
-  run "后端测试"       bash -c 'cd services/api && python -m pytest -q'
+  run "后端 lint"      bash -c 'cd services/api && "$PY_BIN" -m ruff check . && "$PY_BIN" -m ruff format --check .'
+  run "后端测试"       bash -c 'cd services/api && "$PY_BIN" -m pytest -q'
 fi
 
 if [[ "$SCOPE" == "all" || "$SCOPE" == "web" ]]; then
@@ -84,8 +103,8 @@ if [[ "$SCOPE" == "all" || "$SCOPE" == "web" ]]; then
 fi
 
 if [[ "$SCOPE" == "all" ]]; then
-  run "契约自检"       python scripts/check_contract.py
-  run "任务卡与看板一致" bash -c 'python scripts/gen_cards.py >/dev/null && git diff --quiet -- tasks/ || { echo "tasks/ 与看板不一致：重新生成并提交"; false; }'
+  run "契约自检"       bash -c '"$PY_BIN" scripts/check_contract.py'
+  run "任务卡与看板一致" bash -c '"$PY_BIN" scripts/gen_cards.py >/dev/null && git diff --quiet -- tasks/ || { echo "tasks/ 与看板不一致：重新生成并提交"; false; }'
 fi
 
 printf '\n'

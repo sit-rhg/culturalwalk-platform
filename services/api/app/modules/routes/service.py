@@ -406,6 +406,7 @@ class RoutesService:
         内容冻结两次会得到不同 hash，审批就无法按 hash 精确授权。
         """
         return {
+            "channel": draft.channel,
             "title": draft.title,
             "summary": draft.summary,
             "theme_tags": list(draft.theme_tags or []),

@@ -107,6 +107,7 @@ class DemoRoute:
     theme_tags: list[str]
     duration_minutes: int
     state: str  # DraftState 的 value；这里用字符串，避免 dataclass 默认值引用 import 顺序
+    channel: str  # official=平台精选，user=用户投稿（0011 起落库）
     nodes: tuple[DemoNode, ...]
 
 
@@ -118,6 +119,7 @@ DEMO_ROUTES: tuple[DemoRoute, ...] = (
         theme_tags=["历史", "自然", "建筑"],
         duration_minutes=300,
         state="APPROVED_LOCKED",
+        channel="official",
         nodes=(
             DemoNode("yuelu-academy", 90, None, "先看讲堂与御书楼，再沿岳麓山脚走一圈。"),
             DemoNode("orange-isle", 120, "metro", "地铁 4 号线到橘子洲站，洲头看湘江北去。"),
@@ -131,6 +133,7 @@ DEMO_ROUTES: tuple[DemoRoute, ...] = (
         theme_tags=["历史", "建筑", "民俗"],
         duration_minutes=300,
         state="APPROVED_LOCKED",
+        channel="user",
         nodes=(
             DemoNode("tianxin-pavilion", 60, None, "上城墙看老城天际线，约一小时足够。"),
             DemoNode("hunan-museum", 150, "taxi", "马王堆陈列是重点，建议提前预约。"),
@@ -144,6 +147,7 @@ DEMO_ROUTES: tuple[DemoRoute, ...] = (
         theme_tags=["历史", "民俗", "美食"],
         duration_minutes=180,
         state="SUBMITTED_LOCKED",
+        channel="user",
         nodes=(
             DemoNode("taiping-street", 60, None, "从五一大道口进老街。"),
             DemoNode("chaozong-street", 90, "walk", "沿湘江路向北步行到潮宗街。"),
@@ -329,6 +333,11 @@ def _ensure_route(session, editor: User, spec: DemoRoute) -> dict[str, object]:
         ),
         idempotency_key=spec.key,
     )
+    # 来源通道不进契约（RouteDraftCreate 没有这个字段），演示数据自己落：
+    # 必须在 freeze_version 之前设好，否则快照里没有 channel，发布后会被当成用户投稿。
+    if draft.channel != spec.channel:
+        draft.channel = spec.channel
+        session.flush()
 
     # 同 key 重放时 replace_nodes 会在写库前直接返回，所以这里第二遍也是安全的。
     service.replace_nodes(

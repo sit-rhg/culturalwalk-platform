@@ -23,10 +23,23 @@ export type DemoAccount = {
   label: string
 }
 
+/** 假数据模式（VITE_USE_MOCK 默认开启）里的演示账号。 */
 export const DEMO_ACCOUNTS: DemoAccount[] = [
   { username: '文化漫步者', password: 'cw123456', label: '普通用户' },
   { username: '审核编辑', password: 'cw123456', label: '管理员' },
 ]
+
+/** 真接口模式下的演示账号：由 `scripts/seed_demo.py` 写进数据库（P-21）。 */
+export const SEEDED_ACCOUNTS: DemoAccount[] = [
+  { username: 'demo@demo.local', password: 'Demo12345!', label: '普通用户' },
+  { username: 'reviewer@demo.local', password: 'Demo12345!', label: '审核员（管理员）' },
+  { username: 'editor@demo.local', password: 'Demo12345!', label: '编辑' },
+]
+
+/** 当前该显示哪组演示账号：跟着“是否连真后端”走，否则点了必然登录失败。 */
+export function demoAccounts(useMock: boolean): DemoAccount[] {
+  return useMock ? DEMO_ACCOUNTS : SEEDED_ACCOUNTS
+}
 
 export const MIN_USERNAME_LENGTH = 2
 export const MIN_PASSWORD_LENGTH = 6

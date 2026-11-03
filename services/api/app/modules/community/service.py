@@ -166,9 +166,11 @@ class _RouteFilter:
                 return False
         if self.budget_max is not None and _cost_of(snapshot).min_total > self.budget_max:
             return False
-        # routes 表尚未落地，没有 channel 字段：所有路线都按用户投稿处理，
-        # 因此筛 official 只能得到空页（不伪造官方身份）。
-        return self.channel != "official"
+        # 来源以快照里的 channel 为准（0011 起 route_drafts 有这一列）；
+        # 旧快照没有该字段时按用户投稿处理，不把老数据冒充成官方。
+        if self.channel is None:
+            return True
+        return str(snapshot.get("channel") or "user") == self.channel
 
 
 class CommunityService:
@@ -420,7 +422,8 @@ class CommunityService:
                     title=str(snapshot.get("title") or ""),
                     summary=_optional_str(snapshot.get("summary")),
                     cover_url=None,
-                    channel="user",
+                    # 来源跟筛选读同一处：快照里的 channel；旧快照没有就按用户投稿。
+                    channel=str(snapshot.get("channel") or "user"),
                     author=AuthorOut(id=author_id, username=self._username_of(author_id)),
                     theme_tags=[str(tag) for tag in snapshot.get("theme_tags") or []],
                     duration_minutes=_optional_int(snapshot.get("duration_minutes")),

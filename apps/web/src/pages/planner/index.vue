@@ -6,7 +6,13 @@ import { RouterLink } from 'vue-router'
 
 import type { PlanDetail, PlanInput, RouteDraftDetail } from '@/api/types'
 import { ApiError, api } from '@/shared/api'
-import { confidenceLabel, durationLabel, moneyRange, transportLabel } from '@/shared/format'
+import {
+  confidenceLabel,
+  costText as costTextOf,
+  durationLabel,
+  moneyRange,
+  transportLabel,
+} from '@/shared/format'
 import { isLoggedIn } from '@/shared/session'
 import EmptyState from '@/shared/ui/EmptyState.vue'
 
@@ -61,7 +67,8 @@ const days = computed<PlanDay[]>(() => {
   }))
 })
 
-const costText = computed(() => moneyRange(plan.value?.cost?.min_total, plan.value?.cost?.max_total))
+// 一处票价都没核过时不能显示成 ¥0：costText 会把它说成「费用待核实」。
+const costText = computed(() => costTextOf(plan.value?.cost))
 const unknownCount = computed(() => plan.value?.cost?.unknown_count ?? 0)
 const cityText = computed(
   () => CITY_OPTIONS.find((city) => city.value === plan.value?.city)?.label ?? plan.value?.city ?? '',

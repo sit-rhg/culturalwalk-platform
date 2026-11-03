@@ -23,6 +23,7 @@ from app.core.errors import Conflict, Forbidden, NotFound
 from app.core.pagination import DEFAULT_LIMIT, MAX_LIMIT, decode_cursor, encode_cursor
 from app.modules.audit import service as audit
 from app.modules.planner.agents.base import PlaceSource, PlanContext
+from app.modules.planner.candidates import catalog_candidate_source
 from app.modules.planner.draft import (
     RouteDraftPort,
     draft_spec,
@@ -462,7 +463,10 @@ class PlannerService:
         成功时顺手把排好的日程落库并标价（PL-06）：目录结构要跟着生成结果走，
         所以放在这里而不是入队时——入队时还没有日程。
         """
-        result = Orchestrator(place_source=place_source).run(_context_from_itinerary(itinerary))
+        # 没注入检索源就用地点库兜底：PL-03 当时的空实现会让日程为空，
+        # 而「排不出一条行程」对用户来说等于功能没做。
+        source = place_source or catalog_candidate_source(self.db)
+        result = Orchestrator(place_source=source).run(_context_from_itinerary(itinerary))
         for index, step in enumerate(result.steps):
             self.db.add(
                 AgentStep(
