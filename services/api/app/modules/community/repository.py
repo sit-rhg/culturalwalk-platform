@@ -13,16 +13,19 @@ from sqlalchemy.orm import Session
 from app.modules.community.models import Comment, CommentStatus, Favorite
 
 # ⚠️ 已知的跨模块 import models：routes 模块没有公开的「已发布路线」读服务
-# （RoutesService 只有草稿自己的 CRUD，发布 RT-05 也还没落地），而社区必须能按
-# 已发布态列路线。当前约定「route_versions.route_id 非空 = 已发布」（发布时才回填，
-# 见 routes/models.py 的注释）。等 routes 模块提供公开读服务或 publications 表落地，
-# 把下面「已发布路线」的三段查询换成 service 调用，删掉这个 import。
+# （RoutesService 只有草稿自己的 CRUD），而社区必须能按已发布态列路线。
+# 判据是 moderation 的 publications.state == PUBLISHED，并且内容取发布记录
+# 绑定的 version_id——**不能**用 route_versions.route_id 非空：下线只改
+# publications.state，route_id 会一直留在版本行上；同一 route 也可能有多条
+# 版本，最新那条未必是已发布的那条。等 routes 提供公开读服务再把查询收口。
+from app.modules.moderation.models import Publication, PublicationState
 from app.modules.routes.models import RouteDraft, RouteVersion
 
 # 注释型（置顶、时间倒序）游标的位置；置顶状态不是时间，core 的两字段游标装不下。
 CommentPosition = tuple[bool, datetime, uuid.UUID]
-# 路线列表的位置（发布时间 + route_id）。
+# 路线列表游标的位置（发布时间 + route_id）与查询返回的一行（route_id + 发布时间）。
 RoutePosition = tuple[datetime, uuid.UUID]
+PublishedPosition = tuple[uuid.UUID, datetime]
 
 
 class CommunityRepository:
@@ -127,7 +130,7 @@ class CommunityRepository:
         )
         return {route_id: int(total) for route_id, total in self.db.execute(stmt)}
 
-    # ---------- 已发布路线（临时读 routes 模块的表，原因见文件头） ----------
+    # ---------- 已发布路线（跨模块读 publications + routes 的表，原因见文件头） ----------
 
     def latest_published_positions(
         self,
@@ -135,19 +138,19 @@ class CommunityRepository:
         after: RoutePosition | None,
         limit: int,
         descending: bool,
-    ) -> list[RoutePosition]:
-        """每个已发布 route 的「最新版本时间」，按时间排序分页。
+    ) -> list[PublishedPosition]:
+        """每个「当前处于发布态」的 route 及发布版本的创建时间，按时间分页。
 
-        先只取 (route_id, max(created_at))：GROUP BY 一行一个 route，
-        分页步长与返回条数一致，不会像 join 版本明细那样一页缩水。
+        只看 publications.state = PUBLISHED 且内容取发布记录绑定的那个版本：
+        下线只改状态、不搬 route_id，用 route_id 判断会把已下线路线继续放出来。
         """
         latest = (
             select(
-                RouteVersion.route_id.label("route_id"),
-                func.max(RouteVersion.created_at).label("last_at"),
+                Publication.route_id.label("route_id"),
+                RouteVersion.created_at.label("last_at"),
             )
-            .where(RouteVersion.route_id.is_not(None))
-            .group_by(RouteVersion.route_id)
+            .join(RouteVersion, RouteVersion.id == Publication.version_id)
+            .where(Publication.state == PublicationState.PUBLISHED)
             .subquery()
         )
         stmt = select(latest.c.route_id, latest.c.last_at)
@@ -175,26 +178,31 @@ class CommunityRepository:
         return [(route_id, last_at) for route_id, last_at in rows]
 
     def latest_versions(self, route_ids: list[uuid.UUID]) -> dict[uuid.UUID, RouteVersion]:
-        """批量取每條路线的最新版本行（内容取 version.snapshot）。"""
+        """批量取每条路线「发布记录绑定的」版本行（内容取 version.snapshot）。"""
         if not route_ids:
             return {}
         stmt = (
             select(RouteVersion)
-            .where(RouteVersion.route_id.in_(route_ids))
-            .order_by(RouteVersion.created_at.desc(), RouteVersion.id.desc())
+            .join(Publication, Publication.version_id == RouteVersion.id)
+            .where(
+                RouteVersion.route_id.in_(route_ids),
+                Publication.state == PublicationState.PUBLISHED,
+            )
         )
-        result: dict[uuid.UUID, RouteVersion] = {}
-        for version in self.db.execute(stmt).scalars():
-            if version.route_id is not None:
-                # 同一 route 的第一条就是最新（SQL 已按时间倒序）。
-                result.setdefault(version.route_id, version)
-        return result
+        return {
+            version.route_id: version
+            for version in self.db.execute(stmt).scalars()
+            if version.route_id is not None
+        }
 
     def latest_version(self, route_id: uuid.UUID) -> RouteVersion | None:
         stmt = (
             select(RouteVersion)
-            .where(RouteVersion.route_id == route_id)
-            .order_by(RouteVersion.created_at.desc(), RouteVersion.id.desc())
+            .join(Publication, Publication.version_id == RouteVersion.id)
+            .where(
+                RouteVersion.route_id == route_id,
+                Publication.state == PublicationState.PUBLISHED,
+            )
             .limit(1)
         )
         return self.db.execute(stmt).scalar_one_or_none()
