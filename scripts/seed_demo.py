@@ -1,4 +1,4 @@
-"""演示种子数据：3 个账号 + 长沙 6 个点位 + 3 条路线草稿。
+"""演示种子数据：3 个账号 + 长沙 6 个点位 + 10 条路线 + 3 份预生成行程。
 
 可重复执行：所有行都有稳定主键 / 幂等键，第二次运行不会重复插入，也不会覆盖
 后台已经改过的内容（账号密码与角色除外，见下）。
@@ -26,21 +26,29 @@ alembic / uvicorn 看到的始终是同一个库；不传时沿用环境变量�
   现有 RBAC 里由 admin 承担，所以审核员账号用 admin。
 - catalog/seed_data.json 里的 6 个长沙点位（复用 CA-02 的校验与 uuid5 主键，
   verified 说法必须带来源的红线也在那里）。
-- 2 条“已发布”路线 + 1 条待审草稿。注意：仓库当前没有 routes/submissions/
-  publications 表，也没有发布、审核队列端点（MD-02/MD-04 未实现），因此这里用
-  RouteDraft + 冻结的 RouteVersion 表达：APPROVED_LOCKED 视为已发布，
-  SUBMITTED_LOCKED 视为待审。这是现有 schema 能表达的最接近状态，不是真正的
-  发布记录——等发布/审核模块落地后应改为调用对应 service。
+- 10 条已发布路线（官方精选 5 条 + 用户投稿 5 条）+ 1 条待审草稿，覆盖历史、
+  建筑、民俗、美食、自然、市井、书院、夜景、江景、近代史等主题，时长 2–6 小时，
+  每条 2–5 个节点，节点只从上面 6 个点位里选（会重复使用，但走法各不相同）。
+  注意：发布/审核端点（MD-02/MD-04）尚未实现，因此这里用 RouteDraft +
+  冻结的 RouteVersion 表达：APPROVED_LOCKED 视为已发布，SUBMITTED_LOCKED
+  视为待审，另外补了 submissions / publications / review_tasks 行，让发现页与
+  审核后台有东西可读。等对应模块落地后应改为调用 service。
+- 3 份预生成行程（demo@demo.local 名下，Planner 的 READY 终态）：直接按
+  itineraries / itinerary_days / itinerary_items 的数据结构落库，并补一条
+  plan_runs + 四个 agent_steps，让行程详情页的“多 Agent 留痕”也是满的。
+  价格一律留空（confidence=unverified），不替点位编票价。
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import sys
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time
 from pathlib import Path
 
 # 以 `python ../../scripts/seed_demo.py` 运行时，sys.path[0] 是 scripts/，
@@ -141,6 +149,133 @@ DEMO_ROUTES: tuple[DemoRoute, ...] = (
         ),
     ),
     DemoRoute(
+        key="demo-seed-route-c-v1",
+        title="马王堆与潮宗街：一天读长沙",
+        summary=(
+            "上午在湖南省博物馆看马王堆汉墓的素纱襌衣与 T 形帛画，下午钻进潮宗街的麻石巷，"
+            "最后从太平老街收尾——长沙的两千年挤在一天里。"
+        ),
+        theme_tags=["历史", "民俗", "建筑"],
+        duration_minutes=330,
+        state="APPROVED_LOCKED",
+        channel="official",
+        nodes=(
+            DemoNode("hunan-museum", 150, None, "马王堆陈列是重点，周一闭馆，记得提前预约。"),
+            DemoNode(
+                "chaozong-street",
+                90,
+                "metro",
+                "看麻石路、老教堂与时务学堂旧址，街区 2019 年完成有机更新。",
+            ),
+            DemoNode("taiping-street", 60, "walk", "沿湘江路向南走到太平老街，边走边吃。"),
+        ),
+    ),
+    DemoRoute(
+        key="demo-seed-route-d-v1",
+        title="登天心阁，望湘江北去",
+        summary=(
+            "从建在古城墙上的天心阁开始，过江到橘子洲头看“湘江北去”，再回太平老街吃一顿晚饭——"
+            "一条把长沙地形串起来的路线。"
+        ),
+        theme_tags=["建筑", "江景", "夜景"],
+        duration_minutes=300,
+        state="APPROVED_LOCKED",
+        channel="official",
+        nodes=(
+            DemoNode("tianxin-pavilion", 90, None, "登阁看老城屋顶，城墙是全国重点文物保护单位。"),
+            DemoNode("orange-isle", 120, "metro", "地铁 1 号线转 4 号线到橘子洲站，走到洲头。"),
+            DemoNode("taiping-street", 60, "walk", "过江回老城，入夜烟火气最重。"),
+        ),
+    ),
+    DemoRoute(
+        key="demo-seed-route-e-v1",
+        title="从博物院到太平老街：文物里的市井",
+        summary=(
+            "先看湖南省博物馆的马王堆陈列，再坐地铁到太平老街，把汉墓里的器物和街面上的烟火气对上。"
+        ),
+        theme_tags=["历史", "市井", "美食"],
+        duration_minutes=240,
+        state="APPROVED_LOCKED",
+        channel="official",
+        nodes=(
+            DemoNode("hunan-museum", 120, None, "按展厅顺序走：马王堆、青铜、陶瓷。"),
+            DemoNode("taiping-street", 90, "metro", "地铁 2 号线到五一广场，步行进太平老街。"),
+        ),
+    ),
+    DemoRoute(
+        key="demo-seed-route-f-v1",
+        title="湘江夜：橘子洲头与太平街的灯",
+        summary="傍晚进橘子洲走到洲头看日落，过江后在太平老街吃夜宵——天黑了才开始的半条路线。",
+        theme_tags=["夜景", "江景", "美食"],
+        duration_minutes=180,
+        state="APPROVED_LOCKED",
+        channel="official",
+        nodes=(
+            DemoNode("orange-isle", 90, None, "傍晚进洲，洲头等日落与江灯。"),
+            DemoNode("taiping-street", 75, "walk", "过江到太平老街，吃夜宵收尾。"),
+        ),
+    ),
+    DemoRoute(
+        key="demo-seed-route-g-v1",
+        title="太平街到潮宗街：两条老街的午后",
+        summary="在太平老街吃一顿，再沿湘江路走到潮宗街，看麻石路、老教堂和巷子里的新店。",
+        theme_tags=["美食", "市井", "民俗"],
+        duration_minutes=180,
+        state="APPROVED_LOCKED",
+        channel="user",
+        nodes=(
+            DemoNode("taiping-street", 100, None, "从五一大道口进街，边走边吃。"),
+            DemoNode("chaozong-street", 60, "walk", "沿湘江路向北，走进潮宗街的麻石巷。"),
+        ),
+    ),
+    DemoRoute(
+        key="demo-seed-route-h-v1",
+        title="潮宗街的旧墙与新店",
+        summary="两小时走完潮宗街：老教堂、时务学堂旧址在巷子深处，新开的咖啡馆就贴着旧墙。",
+        theme_tags=["民俗", "建筑", "市井"],
+        duration_minutes=120,
+        state="APPROVED_LOCKED",
+        channel="user",
+        nodes=(
+            DemoNode("chaozong-street", 75, None, "从老教堂走到时务学堂旧址，再沿麻石路折回。"),
+            DemoNode("taiping-street", 45, "walk", "往南走到太平老街，顺路吃碗粉。"),
+        ),
+    ),
+    DemoRoute(
+        key="demo-seed-route-i-v1",
+        title="岳麓山脚的一整天：书院、江洲与日落",
+        summary="上午把岳麓书院走完，下午过江去橘子洲，在洲头等日落——一整天都在岳麓区的地界上转。",
+        theme_tags=["书院", "自然", "江景"],
+        duration_minutes=360,
+        state="APPROVED_LOCKED",
+        channel="user",
+        nodes=(
+            DemoNode("yuelu-academy", 150, None, "讲堂、御书楼、半学斋按中轴走一遍。"),
+            DemoNode("orange-isle", 150, "metro", "地铁 4 号线过江，在洲上等日落。"),
+        ),
+    ),
+    DemoRoute(
+        key="demo-seed-route-j-v1",
+        title="城墙上的近代史：天心阁与潮宗街",
+        summary=(
+            "从天心阁的古城墙走到潮宗街的时务学堂旧址，再拐进太平老街——长沙的近代化就在这几条巷子里。"
+        ),
+        theme_tags=["近代史", "建筑", "历史"],
+        duration_minutes=240,
+        state="APPROVED_LOCKED",
+        channel="user",
+        nodes=(
+            DemoNode("tianxin-pavilion", 90, None, "先看长沙仅存的一段古城墙。"),
+            DemoNode(
+                "chaozong-street",
+                90,
+                "metro",
+                "时务学堂旧址在巷子深处，维新变法曾从这里起步。",
+            ),
+            DemoNode("taiping-street", 45, "walk", "最后一站回到街面上，贾谊故居也在这一带。"),
+        ),
+    ),
+    DemoRoute(
         key="demo-seed-route-pending-v1",
         title="老城漫步：太平老街—潮宗街—天心阁",
         summary="待审核示例：三个老城点位串联，用于演示审核队列里的待审草稿。",
@@ -155,6 +290,133 @@ DEMO_ROUTES: tuple[DemoRoute, ...] = (
         ),
     ),
 )
+
+
+@dataclass(frozen=True, slots=True)
+class DemoPlanItem:
+    slug: str
+    start: str  # "09:00"，入库时转 time；只用于演示，不接排班算法
+    stay_minutes: int
+    transport: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class DemoPlanDay:
+    summary: str
+    items: tuple[DemoPlanItem, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class DemoPlan:
+    key: str
+    days: int
+    people: int
+    budget_total: int  # 分
+    preferences: dict[str, object]
+    plan_days: tuple[DemoPlanDay, ...]
+
+
+# 3 份预生成行程：直接写成 READY 终态，答辩时打开“我的行程”就有内容可点。
+# 主题分别覆盖历史建筑、美食市井、自然江景，日期留空（演示不绑定具体日子）。
+DEMO_PLANS: tuple[DemoPlan, ...] = (
+    DemoPlan(
+        key="demo-seed-plan-history-2d",
+        days=2,
+        people=2,
+        budget_total=80000,
+        preferences={
+            "include_lodging": False,
+            "day_parts": ["morning", "afternoon"],
+            "themes": ["历史", "建筑"],
+            "transport": ["metro", "walk"],
+            "pace": "normal",
+            "start_point": None,
+        },
+        plan_days=(
+            DemoPlanDay(
+                summary="岳麓山下：书院与江洲",
+                items=(
+                    DemoPlanItem("yuelu-academy", "09:00", 120, None),
+                    DemoPlanItem("orange-isle", "14:00", 120, "metro"),
+                ),
+            ),
+            DemoPlanDay(
+                summary="老城一天：博物院、潮宗街、太平街",
+                items=(
+                    DemoPlanItem("hunan-museum", "09:30", 150, "metro"),
+                    DemoPlanItem("chaozong-street", "14:30", 75, "metro"),
+                    DemoPlanItem("taiping-street", "16:30", 60, "walk"),
+                ),
+            ),
+        ),
+    ),
+    DemoPlan(
+        key="demo-seed-plan-streetfood-1d",
+        days=1,
+        people=3,
+        budget_total=40000,
+        preferences={
+            "include_lodging": False,
+            "day_parts": ["afternoon", "evening"],
+            "themes": ["美食", "市井"],
+            "transport": ["walk", "metro"],
+            "pace": "relaxed",
+            "start_point": None,
+        },
+        plan_days=(
+            DemoPlanDay(
+                summary="从太平老街吃到潮宗街",
+                items=(
+                    DemoPlanItem("taiping-street", "11:00", 100, None),
+                    DemoPlanItem("tianxin-pavilion", "14:00", 60, "walk"),
+                    DemoPlanItem("chaozong-street", "16:30", 75, "metro"),
+                ),
+            ),
+        ),
+    ),
+    DemoPlan(
+        key="demo-seed-plan-river-night-2d",
+        days=2,
+        people=2,
+        budget_total=60000,
+        preferences={
+            "include_lodging": False,
+            "day_parts": ["afternoon", "evening"],
+            "themes": ["自然", "江景", "夜景"],
+            "transport": ["metro", "walk"],
+            "pace": "normal",
+            "start_point": None,
+        },
+        plan_days=(
+            DemoPlanDay(
+                summary="岳麓山脚到江心洲",
+                items=(
+                    DemoPlanItem("yuelu-academy", "13:30", 90, None),
+                    DemoPlanItem("orange-isle", "16:00", 120, "metro"),
+                ),
+            ),
+            DemoPlanDay(
+                summary="博物院与老街的夜",
+                items=(
+                    DemoPlanItem("hunan-museum", "10:00", 120, "metro"),
+                    DemoPlanItem("taiping-street", "17:00", 90, "metro"),
+                ),
+            ),
+        ),
+    ),
+)
+
+
+# 四个 Agent 的留痕顺序与 planner 的 Orchestrator 一致（researcher → planner →
+# critic → verifier），step_index 从 0 开始，和真实流水线写出来的行同形。
+def _demo_agent_steps() -> tuple[tuple[AgentName, int], ...]:
+    """四个 Agent 的留痕顺序与真实流水线一致；做成函数是因为 app 的 import 在文件末段。"""
+    return (
+        (AgentName.RESEARCHER, 2400),
+        (AgentName.PLANNER, 5200),
+        (AgentName.CRITIC, 3100),
+        (AgentName.VERIFIER, 1800),
+    )
 
 
 def _configure_console() -> None:
@@ -205,6 +467,17 @@ from app.modules.moderation.models import (  # noqa: E402
     Submission,
     SubmissionState,
 )
+from app.modules.planner.models import (  # noqa: E402
+    AgentName,
+    AgentStep,
+    AgentStepStatus,
+    Itinerary,
+    ItineraryDay,
+    ItineraryItem,
+    PlanRun,
+    PlanState,
+)
+from app.modules.planner.pricing import REASON_UNKNOWN, UNVERIFIED  # noqa: E402
 from app.modules.routes.models import DraftState, RouteDraft, RouteVersion  # noqa: E402
 from app.modules.routes.schemas import (  # noqa: E402
     RouteDraftCreate,
@@ -481,6 +754,167 @@ def _ensure_for_review(session, spec: DemoRoute, draft: RouteDraft, editor: User
     return True
 
 
+def _plan_id(key: str) -> uuid.UUID:
+    """行程主键按 key 派生：同一份演示行程永远同一个 UUID，重跑才认得出“已经灌过”。"""
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"culturalwalk:demo:itinerary:{key}")
+
+
+def _plan_row_id(key: str, *parts: object) -> uuid.UUID:
+    """逐日安排 / 生成记录 / 步骤的主键同样派生，保证一行不会被写两遍。"""
+    tail = ":".join(str(part) for part in parts)
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"culturalwalk:demo:itinerary:{key}:{tail}")
+
+
+def _plan_start_time(text: str) -> time:
+    hour, minute = text.split(":", 1)
+    return time(hour=int(hour), minute=int(minute))
+
+
+def _plan_minutes(text: str) -> int:
+    start = _plan_start_time(text)
+    return start.hour * 60 + start.minute
+
+
+def _check_plan_spec(spec: DemoPlan) -> None:
+    """写库前先校验手写日程：天数对不上、时间倒流、排过零点都直接报错。
+
+    这些错误在页面上只表现为“顺序怪怪的”，不报错就很难在答辩前发现。
+    """
+    if len(spec.plan_days) != spec.days:
+        raise RuntimeError(f"行程 {spec.key} 写了 {len(spec.plan_days)} 天，但 days={spec.days}")
+    for day_index, day in enumerate(spec.plan_days, start=1):
+        if not day.items:
+            raise RuntimeError(f"行程 {spec.key} 第 {day_index} 天没有任何安排")
+        cursor = -1
+        for item in day.items:
+            start = _plan_minutes(item.start)
+            if start < cursor:
+                raise RuntimeError(f"行程 {spec.key} 第 {day_index} 天的 {item.slug} 与上一站重叠")
+            cursor = start + item.stay_minutes
+            if cursor > 24 * 60:
+                raise RuntimeError(f"行程 {spec.key} 第 {day_index} 天排过了 24:00")
+            if item.slug not in DEMO_SLUGS:
+                raise RuntimeError(f"行程 {spec.key} 用到了演示点位之外的 slug：{item.slug}")
+
+
+def _ensure_plan(session, user: User, spec: DemoPlan) -> dict[str, object]:
+    """按 Planner 的表结构直接落一份 READY 行程；已存在就整条跳过，不覆盖。
+
+    不经过 PlannerService：它按 Idempotency-Key + input_hash 建 DRAFT 再排队给
+    worker，这里要的是“库里已经有一份最终态行程”，直接写表最接近演示现场。
+    """
+    existing = session.get(Itinerary, _plan_id(spec.key))
+    if existing is not None:
+        return {"created": False, "itinerary": existing}
+
+    _check_plan_spec(spec)
+
+    input_hash = hashlib.sha256(
+        json.dumps(
+            {
+                "city": "长沙",
+                "days": spec.days,
+                "people": spec.people,
+                "budget_total": spec.budget_total,
+                "preferences": spec.preferences,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+
+    itinerary = Itinerary(
+        id=_plan_id(spec.key),
+        user_id=user.id,
+        city="长沙",
+        days=spec.days,
+        people=spec.people,
+        budget_total=spec.budget_total,
+        preferences=spec.preferences,
+        state=PlanState.READY,
+        idempotency_key=f"demo-seed:{spec.key}",
+        input_hash=input_hash,
+    )
+    session.add(itinerary)
+    session.flush()
+
+    for day_index, day in enumerate(spec.plan_days, start=1):
+        day_row = ItineraryDay(
+            id=_plan_row_id(spec.key, "day", day_index),
+            itinerary_id=itinerary.id,
+            day_index=day_index,
+            summary=day.summary,
+        )
+        session.add(day_row)
+        session.flush()
+        for order, item in enumerate(day.items, start=1):
+            session.add(
+                ItineraryItem(
+                    id=_plan_row_id(spec.key, "day", day_index, "item", order),
+                    day_id=day_row.id,
+                    order=order,
+                    place_id=place_id(item.slug),
+                    start_time=_plan_start_time(item.start),
+                    stay_minutes=item.stay_minutes,
+                    transport=item.transport,
+                    # 演示点位没有票价来源：留空 + unverified，前端才会标“待核实”。
+                    # 填 0 会假装免费，填数字则是在编来源，两种都比留空更糟。
+                    price_min=None,
+                    price_max=None,
+                    confidence=UNVERIFIED,
+                    source_ids=[],
+                    note=REASON_UNKNOWN,
+                )
+            )
+
+    run = PlanRun(
+        id=_plan_row_id(spec.key, "run"),
+        itinerary_id=itinerary.id,
+        state=PlanState.READY,
+        input_hash=input_hash,
+        prompt_version="demo-seed",
+    )
+    session.add(run)
+    session.flush()
+
+    for index, (agent, duration_ms) in enumerate(_demo_agent_steps()):
+        session.add(
+            AgentStep(
+                id=_plan_row_id(spec.key, "step", index),
+                run_id=run.id,
+                agent=agent,
+                status=AgentStepStatus.DONE,
+                step_index=index,
+                output_digest=hashlib.sha256(f"{spec.key}:{agent}".encode()).hexdigest(),
+                duration_ms=duration_ms,
+            )
+        )
+    session.flush()
+    return {"created": True, "itinerary": itinerary}
+
+
+def _plan_item_count(session, itinerary_id: uuid.UUID) -> int:
+    count = session.scalar(
+        select(func.count())
+        .select_from(ItineraryItem)
+        .join(ItineraryDay, ItineraryItem.day_id == ItineraryDay.id)
+        .where(ItineraryDay.itinerary_id == itinerary_id)
+    )
+    return int(count or 0)
+
+
+def _print_plans(session, plan_stats: list[tuple[DemoPlan, dict[str, object]]]) -> None:
+    print(f"[种子] 行程：{len(DEMO_PLANS)} 条预生成（demo@demo.local，状态 READY）")
+    for spec, stats in plan_stats:
+        themes = spec.preferences.get("themes")
+        theme_text = "、".join(str(tag) for tag in themes) if isinstance(themes, list) else ""
+        print(
+            f"        - {spec.days} 天 / {spec.people} 人 / 预算 {spec.budget_total // 100} 元"
+            f"｜{theme_text}｜{_plan_item_count(session, stats['itinerary'].id)} 项安排"
+            f"｜{'新建' if stats['created'] else '已存在'}"
+        )
+
+
 def _print_counts(session, place_ids: list[uuid.UUID]) -> None:
     fact_count = session.scalar(
         select(func.count()).select_from(PlaceFact).where(PlaceFact.place_id.in_(place_ids))
@@ -547,6 +981,13 @@ def main(argv: list[str] | None = None) -> int:
             pending_new += int(_ensure_for_review(session, spec, stats["draft"], editor))
             route_stats.append((spec, stats))
 
+        plan_stats = []
+        plans_new = 0
+        for spec in DEMO_PLANS:
+            stats = _ensure_plan(session, users["user"], spec)
+            plans_new += int(stats["created"])
+            plan_stats.append((spec, stats))
+
         session.commit()
 
         print(
@@ -560,19 +1001,48 @@ def main(argv: list[str] | None = None) -> int:
         )
         _print_counts(session, place_ids)
         node_total = sum(len(spec.nodes) for spec in DEMO_ROUTES)
-        print(f"[种子] 路线：{len(DEMO_ROUTES)} 条（节点 {node_total} 个）")
+        official_total = sum(1 for spec in DEMO_ROUTES if spec.channel == "official")
+        user_total = sum(1 for spec in DEMO_ROUTES if spec.channel == "user")
+        print(
+            f"[种子] 路线：{len(DEMO_ROUTES)} 条（官方 {official_total} / 投稿 {user_total}，"
+            f"节点 {node_total} 个）"
+        )
         for spec, stats in route_stats:
             print(
-                f"        - {spec.title}｜状态 {spec.state}｜"
-                f"{'新建' if stats['created'] else '已存在'}｜"
+                f"        - {spec.title}｜{'官方' if spec.channel == 'official' else '投稿'}｜"
+                f"状态 {spec.state}｜{'新建' if stats['created'] else '已存在'}｜"
                 f"{'新冻结版本' if stats['version_created'] else '版本已存在'}"
             )
+        _print_plans(session, plan_stats)
         print(
             "[完成] 演示账号：editor@demo.local / reviewer@demo.local / demo@demo.local，"
             f"密码 {PASSWORD}"
         )
-        print(f"[完成] 已发布路线新增 {published_new} 条（发现页可直接看到）")
+        published_total = session.scalar(
+            select(func.count())
+            .select_from(Publication)
+            .where(Publication.state == PublicationState.PUBLISHED)
+        )
+        ready_plans = session.scalar(
+            select(func.count())
+            .select_from(Itinerary)
+            .where(
+                Itinerary.user_id == users["user"].id,
+                Itinerary.state == PlanState.READY,
+            )
+        )
+        print(
+            f"[完成] 已发布路线新增 {published_new} 条，库里 PUBLISHED 共 {published_total} 条"
+            "（发现页可直接看到）"
+        )
         print(f"[完成] 待审投稿新增 {pending_new} 条（审核后台可直接看到）")
+        print(
+            f"[完成] 预生成行程新增 {plans_new} 条，demo@demo.local 名下 READY 共 {ready_plans} 条"
+        )
+        print(
+            f"[验收] M0-07 已发布路线 {published_total} 条（要求 ≥10）｜"
+            f"QA-03 预生成行程 {ready_plans} 条（要求 ≥3）"
+        )
         return 0
     except Exception as exc:  # noqa: BLE001
         session.rollback()

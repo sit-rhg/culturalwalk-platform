@@ -1706,7 +1706,34 @@ export interface paths {
         };
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * 删除媒体（软删；被路线草稿引用时 409）
+         * @description 只能删本人上传的资产；已删除或不存在的资产一律 404（不泄露存在性）。
+         *     若仍有路线草稿的节点引用该资产，返回 409 MEDIA_IN_USE 并列出草稿，
+         *     要求先改草稿再删——避免已发布路线在展示时突然少图。
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    media_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description 已删除（软删，行保留、deleted_at 置位） */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;

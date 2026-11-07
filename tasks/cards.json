@@ -17,7 +17,7 @@
     "milestone": "M0",
     "title": "本地一键启动",
     "deliverable": "infra/docker-compose.yml",
-    "accept": "docker compose up 后 PG/MinIO/API/web 全部起来",
+    "accept": "docker compose up -d 起 PG+MinIO，应用在宿主机跑（改代码即时生效）；CI 用 docker compose config 校验语法",
     "depends_on": "M0-01",
     "estimate_days": 1.0
   },
@@ -71,8 +71,8 @@
     "owner": "P1",
     "milestone": "M0",
     "title": "种子数据脚本",
-    "deliverable": "services/api/scripts/seed.py",
-    "accept": "空库执行后能看到 10 条长沙路线",
+    "deliverable": "scripts/seed_demo.py",
+    "accept": "空库执行后能看到 10 条长沙路线 + 3 条预生成行程",
     "depends_on": "CA-02",
     "estimate_days": 1.0
   },

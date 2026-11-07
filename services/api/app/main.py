@@ -83,6 +83,12 @@ def create_app() -> FastAPI:
     for module_router in MODULE_ROUTERS:
         api.include_router(module_router)
 
+    # 根路径再挂一个健康检查：监控/容器探针默认打 /health，不带 /api/v1 前缀。
+    # 返回体和上面完全一致，避免运维侧为了探针去改前缀。
+    @app.get("/health", tags=["system"], summary="健康检查（根路径别名）", include_in_schema=False)
+    def health_root() -> dict[str, str]:
+        return {"status": "ok", "version": "0.1.0"}
+
     app.include_router(api)
     return app
 

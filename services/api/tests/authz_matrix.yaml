@@ -1,0 +1,353 @@
+# QA-01 · 权限负例矩阵（接口 + 方法 + 调用者角色 + 期望状态码 + 一句话说明）
+#
+# 本文件是矩阵的唯一事实来源：tests/test_authz_matrix.py 会逐条参数化读取，
+# 每条都现场造出真实资源、真实打一次 TestClient，并断言状态码。
+# 改这里就等于改用例；yaml 条目数必须与实际执行枚数一致（少写一条会红）。
+#
+# 字段：
+#   id          用例名（唯一，直接出现在 pytest 输出里）
+#   method      HTTP 方法
+#   path        真实挂载路径；{draft_id} 等占位符由用例现场创建的真实资源填充
+#   actor       调用者角色：anonymous / user / peer / editor / admin
+#               （peer 是第二个普通用户，专门用来验证跨用户越权）
+#   scenario    现场造数方式，取值见 test_authz_matrix.py 的 SCENARIOS
+#   expected    期望状态码
+#   expect_code 期望的 error.code（只对错误响应；成功响应不填）
+#   headers     额外的静态请求头（If-Match 这类必填头，模拟真实客户端）
+#   json        静态请求体；需要现场生成的值（version_id/content_hash）由 scenario 提供
+#   note        一句话说明：这条在守什么
+cases:
+  # ===== 匿名访问需要登录的写接口：先答"你是谁"，不能退化成 403 =====
+  - id: anon-create-draft
+    method: POST
+    path: /api/v1/route-drafts
+    actor: anonymous
+    scenario: none
+    expected: 401
+    expect_code: UNAUTHORIZED
+    json: {title: 匿名草稿}
+    note: 未登录不能新建路线草稿
+
+  - id: anon-submit-draft
+    method: POST
+    path: /api/v1/route-drafts/{draft_id}/submit
+    actor: anonymous
+    scenario: draft_owned_by_user
+    expected: 401
+    expect_code: UNAUTHORIZED
+    json: {note: 匿名提交}
+    note: 未登录不能把草稿送审
+
+  - id: anon-create-plan
+    method: POST
+    path: /api/v1/plans
+    actor: anonymous
+    scenario: none
+    expected: 401
+    expect_code: UNAUTHORIZED
+    json: {city: 长沙, days: 2, people: 2, budget_total: 50000}
+    note: 未登录不能提交规划条件
+
+  - id: anon-delete-plan
+    method: DELETE
+    path: /api/v1/plans/{plan_id}
+    actor: anonymous
+    scenario: plan_owned_by_user
+    expected: 401
+    expect_code: UNAUTHORIZED
+    note: 未登录不能删除行程
+
+  - id: anon-create-place
+    method: POST
+    path: /api/v1/places
+    actor: anonymous
+    scenario: none
+    expected: 401
+    expect_code: UNAUTHORIZED
+    json: {name: 匿名地点, lat: 28.19, lon: 112.95}
+    note: 未登录不能写地点（连角色判断都轮不到）
+
+  - id: anon-claim-review-task
+    method: POST
+    path: /api/v1/review/tasks/{task_id}/claim
+    actor: anonymous
+    scenario: open_task_owned_by_user
+    expected: 401
+    expect_code: UNAUTHORIZED
+    note: 未登录不能领取审核任务
+
+  - id: anon-publish-submission
+    method: POST
+    path: /api/v1/submissions/{submission_id}/publish
+    actor: anonymous
+    scenario: approved_submission_owned_by_user
+    expected: 401
+    expect_code: UNAUTHORIZED
+    note: 未登录不能发布已通过的投稿
+
+  # ===== 普通用户打管理端：一律 403，且走统一错误信封 =====
+  - id: user-list-review-tasks
+    method: GET
+    path: /api/v1/review/tasks
+    actor: user
+    scenario: none
+    expected: 403
+    expect_code: FORBIDDEN
+    note: 普通用户不能看审核队列
+
+  - id: user-claim-review-task
+    method: POST
+    path: /api/v1/review/tasks/{task_id}/claim
+    actor: user
+    scenario: open_task_owned_by_user
+    expected: 403
+    expect_code: FORBIDDEN
+    note: 普通用户不能领取审核任务
+
+  - id: user-decide-review-task
+    method: POST
+    path: /api/v1/review/tasks/{task_id}/decision
+    actor: user
+    scenario: open_task_owned_by_user
+    expected: 403
+    expect_code: FORBIDDEN
+    json: {action: approve}
+    note: 普通用户不能做审核决定（连别人的稿子也不行）
+
+  - id: user-publish-submission
+    method: POST
+    path: /api/v1/submissions/{submission_id}/publish
+    actor: user
+    scenario: approved_submission_owned_by_user
+    expected: 403
+    expect_code: FORBIDDEN
+    note: 即使投稿是自己的且已通过，普通用户也不能发布
+
+  - id: user-unpublish-publication
+    method: POST
+    path: /api/v1/publications/{publication_id}/unpublish
+    actor: user
+    scenario: publication_owned_by_user
+    expected: 403
+    expect_code: FORBIDDEN
+    json: {reason: 普通用户尝试下线}
+    note: 普通用户不能下线已发布内容
+
+  - id: user-create-place
+    method: POST
+    path: /api/v1/places
+    actor: user
+    scenario: none
+    expected: 403
+    expect_code: FORBIDDEN
+    json: {name: 普通用户地点, lat: 28.19, lon: 112.95}
+    note: 普通用户不能新增地点（需要 editor/admin）
+
+  - id: user-add-place-fact
+    method: POST
+    path: /api/v1/places/{place_id}/facts
+    actor: user
+    scenario: place_exists
+    expected: 403
+    expect_code: FORBIDDEN
+    json:
+      claim: 普通用户补的资料
+      confidence: likely
+      source: {title: 地方志, url: https://example.com/source}
+    note: 普通用户不能给地点补文化资料
+
+  - id: user-read-audit-logs
+    method: GET
+    path: /api/v1/audit-logs
+    actor: user
+    scenario: none
+    expected: 403
+    expect_code: FORBIDDEN
+    note: 普通用户不能查审计日志
+
+  # ===== 利益冲突：审核员不能审自己的投稿 =====
+  - id: editor-review-own-submission
+    method: POST
+    path: /api/v1/review/tasks/{task_id}/decision
+    actor: editor
+    scenario: claimed_own_task
+    expected: 403
+    expect_code: CANNOT_REVIEW_OWN_SUBMISSION
+    json: {action: approve}
+    note: 审核员领了自己投的稿，做决定时必须被利益冲突拦下
+
+  # ===== 跨用户越权：改/删/看别人的草稿与行程 =====
+  - id: peer-patch-user-draft
+    method: PATCH
+    path: /api/v1/route-drafts/{draft_id}
+    actor: peer
+    scenario: draft_owned_by_user
+    expected: 403
+    expect_code: DRAFT_FORBIDDEN
+    headers: {If-Match: "1"}
+    json: {title: 越权改名}
+    note: 别的普通用户不能改我的草稿
+
+  - id: peer-delete-user-draft
+    method: DELETE
+    path: /api/v1/route-drafts/{draft_id}
+    actor: peer
+    scenario: draft_owned_by_user
+    expected: 403
+    expect_code: DRAFT_FORBIDDEN
+    note: 别的普通用户不能删我的草稿
+
+  - id: peer-read-user-draft
+    method: GET
+    path: /api/v1/route-drafts/{draft_id}
+    actor: peer
+    scenario: draft_owned_by_user
+    expected: 403
+    expect_code: DRAFT_FORBIDDEN
+    note: 没发布的草稿对别的用户不可见
+
+  - id: peer-replace-user-draft-nodes
+    method: PUT
+    path: /api/v1/route-drafts/{draft_id}/nodes
+    actor: peer
+    scenario: draft_owned_by_user
+    expected: 403
+    expect_code: DRAFT_FORBIDDEN
+    headers: {If-Match: "1"}
+    json: {nodes: []}
+    note: 别的普通用户不能整表替换我的草稿节点
+
+  - id: peer-delete-user-plan
+    method: DELETE
+    path: /api/v1/plans/{plan_id}
+    actor: peer
+    scenario: plan_owned_by_user
+    expected: 404
+    expect_code: NOT_FOUND
+    note: 删别人的行程按 404 处理，不泄露这个 id 是否存在
+
+  - id: peer-read-user-plan
+    method: GET
+    path: /api/v1/plans/{plan_id}
+    actor: peer
+    scenario: plan_owned_by_user
+    expected: 403
+    expect_code: FORBIDDEN
+    note: 行程详情读别人的要 403（存在但不是你的）
+
+  - id: peer-plan-to-draft
+    method: POST
+    path: /api/v1/plans/{plan_id}/to-draft
+    actor: peer
+    scenario: plan_owned_by_user
+    expected: 403
+    expect_code: FORBIDDEN
+    note: 不能把别人的行程转成自己的草稿
+
+  - id: peer-read-user-submission
+    method: GET
+    path: /api/v1/submissions/{submission_id}
+    actor: peer
+    scenario: user_submission_pending
+    expected: 403
+    expect_code: SUBMISSION_FORBIDDEN
+    note: 投稿详情只有作者本人和 admin/editor 能看
+
+  # ===== 正例：管理员（editor/admin）能走通的通路至少各留一条 =====
+  - id: admin-create-place
+    method: POST
+    path: /api/v1/places
+    actor: admin
+    scenario: none
+    expected: 201
+    json: {name: 岳麓书院, district: 岳麓区, lat: 28.1871, lon: 112.9514, culture_tags: [书院]}
+    note: 管理员新增地点应 201
+
+  - id: admin-add-place-fact
+    method: POST
+    path: /api/v1/places/{place_id}/facts
+    actor: admin
+    scenario: place_exists
+    expected: 201
+    json:
+      claim: 岳麓书院创建于北宋
+      confidence: likely
+      source: {title: 地方志, url: https://example.com/yuelu}
+    note: 管理员补文化资料应 201
+
+  - id: admin-read-audit-logs
+    method: GET
+    path: /api/v1/audit-logs
+    actor: admin
+    scenario: none
+    expected: 200
+    note: 管理员查审计应 200
+
+  - id: editor-list-review-tasks
+    method: GET
+    path: /api/v1/review/tasks
+    actor: editor
+    scenario: none
+    expected: 200
+    note: 审核员看审核队列应 200
+
+  - id: admin-decide-peer-submission
+    method: POST
+    path: /api/v1/review/tasks/{task_id}/decision
+    actor: admin
+    scenario: claimed_peer_task_by_admin
+    expected: 200
+    json: {action: approve}
+    note: 管理员领取并审核别人的投稿应 200
+
+  - id: editor-publish-submission
+    method: POST
+    path: /api/v1/submissions/{submission_id}/publish
+    actor: editor
+    scenario: approved_submission_owned_by_user
+    expected: 201
+    note: 编辑发布已通过的投稿应 201
+
+  - id: editor-unpublish-publication
+    method: POST
+    path: /api/v1/publications/{publication_id}/unpublish
+    actor: editor
+    scenario: publication_owned_by_user
+    expected: 200
+    json: {reason: 矩阵正例：编辑下线}
+    note: 编辑下线已发布内容应 200
+
+  - id: user-create-own-draft
+    method: POST
+    path: /api/v1/route-drafts
+    actor: user
+    scenario: none
+    expected: 201
+    json: {title: 我自己的草稿}
+    note: 普通用户建自己的草稿应 201
+
+  - id: user-patch-own-draft
+    method: PATCH
+    path: /api/v1/route-drafts/{draft_id}
+    actor: user
+    scenario: draft_owned_by_user
+    expected: 200
+    headers: {If-Match: "1"}
+    json: {title: 我改我自己的草稿}
+    note: 普通用户改自己的草稿应 200
+
+  - id: user-read-own-plan
+    method: GET
+    path: /api/v1/plans/{plan_id}
+    actor: user
+    scenario: plan_owned_by_user
+    expected: 200
+    note: 普通用户读自己的行程应 200
+
+  - id: user-delete-own-plan
+    method: DELETE
+    path: /api/v1/plans/{plan_id}
+    actor: user
+    scenario: plan_owned_by_user
+    expected: 204
+    note: 普通用户删自己的行程应 204
