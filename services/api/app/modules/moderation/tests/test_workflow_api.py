@@ -13,7 +13,8 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
@@ -21,8 +22,8 @@ from app.core.deps import create_access_token
 from app.main import app
 from app.modules.audit.models import AuditLog
 from app.modules.audit.service import AuditService
+from app.modules.moderation.models import Publication, PublicationState, Submission
 from app.modules.moderation.models import ReviewTask as ReviewTaskModel
-from app.modules.moderation.models import Submission
 from app.modules.routes.models import RouteVersion
 
 API = "/api/v1"
@@ -621,3 +622,109 @@ def test_cannot_review_own_submission(
     )
     assert conflict.status_code == 403
     assert _code(conflict) == "CANNOT_REVIEW_OWN_SUBMISSION"
+
+
+# ===== 第二批：租约过期的 SQLite 时区 / 发布唯一性 =====
+def test_claim_after_lease_expiry_survives_naive_datetime_readback(
+    client: TestClient,
+    db_session: Session,
+    user_headers: dict[str, str],
+    editor_headers: dict[str, str],
+    editor2_headers: dict[str, str],
+) -> None:
+    """租约过期后再领取，不能因为 SQLite 读回 naive 时间就 500。
+
+    UPDATE 的 WHERE 引用了库里的 lease_expires_at：ORM 默认会在 Python 里重算它
+    （synchronize_session="auto"），而 SQLite 把 DateTime(timezone=True) 读回来是
+    naive 的，与 aware 的 now 一比就 TypeError。expire_all() 强制从库里重读，
+    复现真实请求里「另一个进程刚写过这一行」的情形。
+    """
+    draft_id = _create_draft(client, user_headers)
+    submission = _submit(client, user_headers, draft_id)
+    task = _task_for(client, editor_headers, submission["id"])
+    _claim(client, editor_headers, task["id"])
+
+    db_session.execute(
+        update(ReviewTaskModel)
+        .where(ReviewTaskModel.id == uuid.UUID(task["id"]))
+        .values(lease_expires_at=datetime.now(UTC) - timedelta(minutes=5))
+    )
+    db_session.commit()
+    db_session.expire_all()
+
+    stolen = _post(client, f"{API}/review/tasks/{task['id']}/claim", editor2_headers)
+
+    assert stolen.status_code == 200, stolen.text
+    assert stolen.json()["assignee_id"] == EDITOR_2_ID
+
+
+def test_second_claim_before_expiry_is_conflict_not_server_error(
+    client: TestClient,
+    db_session: Session,
+    user_headers: dict[str, str],
+    editor_headers: dict[str, str],
+    editor2_headers: dict[str, str],
+) -> None:
+    draft_id = _create_draft(client, user_headers)
+    submission = _submit(client, user_headers, draft_id)
+    task = _task_for(client, editor_headers, submission["id"])
+    _claim(client, editor_headers, task["id"])
+    db_session.expire_all()
+
+    conflict = _post(client, f"{API}/review/tasks/{task['id']}/claim", editor2_headers)
+
+    assert conflict.status_code == 409
+    assert _code(conflict) == "TASK_ALREADY_CLAIMED"
+
+
+def test_publication_partial_unique_index_exists(db_session: Session) -> None:
+    """docs/02 §5 的「一条路线只有一条 PUBLISHED」必须由库兜底，不能只靠先查后插。"""
+    sql = db_session.execute(
+        text(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type = 'index' AND name = 'uq_publications_route_published'"
+        )
+    ).scalar_one()
+
+    assert "WHERE state = 'PUBLISHED'" in sql
+
+
+def test_second_published_row_for_same_route_is_rejected_by_index(db_session: Session) -> None:
+    route_id = uuid.uuid4()
+    for _ in range(2):
+        db_session.add(
+            Publication(
+                submission_id=uuid.uuid4(),
+                route_id=route_id,
+                version_id=uuid.uuid4(),
+                content_hash="c" * 64,
+                state=PublicationState.PUBLISHED,
+            )
+        )
+
+    with pytest.raises(IntegrityError):
+        db_session.flush()
+    db_session.rollback()
+
+
+def test_first_publish_route_id_is_deterministic(
+    client: TestClient,
+    user_headers: dict[str, str],
+    editor_headers: dict[str, str],
+) -> None:
+    """首次发布的 route_id 由 draft_id 派生：并发的两次首发必须落到同一个 route。"""
+    draft_id = _create_draft(client, user_headers)
+    submission = _submit(client, user_headers, draft_id)
+    detail, _task = _approve(client, editor_headers, submission["id"])
+
+    response = _post(
+        client,
+        f"{API}/submissions/{submission['id']}/publish",
+        editor_headers,
+        json=_publish_payload(detail),
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["route_id"] == str(
+        uuid.uuid5(uuid.NAMESPACE_URL, f"culturalwalk:route-draft:{draft_id}")
+    )

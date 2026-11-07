@@ -108,7 +108,18 @@ class ModerationRepository:
                 updated_at=now,
             )
         )
-        result = self.db.execute(stmt)
+        return self._execute_cas(stmt)
+
+    def _execute_cas(self, stmt: Any) -> int:
+        """CAS 一律交给数据库判定，关掉 ORM 的会话内同步。
+
+        `synchronize_session` 默认 `"auto"`，会让 ORM 在 Python 里重算 WHERE：
+        这里的比较对象是库里的 `lease_expires_at` 与传入的 `now`，而 SQLite 把
+        `DateTime(timezone=True)` 读回来是 naive 的，和 aware 的 `now` 一比就抛
+        `TypeError: can't compare offset-naive and offset-aware datetimes` ——
+        表现是「租约过期后再领取/决定」直接 500。
+        """
+        result = self.db.execute(stmt.execution_options(synchronize_session=False))
         return cast(CursorResult[Any], result).rowcount or 0
 
     def claim_cas(
@@ -148,8 +159,7 @@ class ModerationRepository:
                 updated_at=now,
             )
         )
-        result = self.db.execute(stmt)
-        return cast(CursorResult[Any], result).rowcount or 0
+        return self._execute_cas(stmt)
 
     def release_cas(
         self,
@@ -177,8 +187,7 @@ class ModerationRepository:
                 updated_at=now,
             )
         )
-        result = self.db.execute(stmt)
-        return cast(CursorResult[Any], result).rowcount or 0
+        return self._execute_cas(stmt)
 
     def complete_cas(
         self,
@@ -207,8 +216,7 @@ class ModerationRepository:
                 updated_at=now,
             )
         )
-        result = self.db.execute(stmt)
-        return cast(CursorResult[Any], result).rowcount or 0
+        return self._execute_cas(stmt)
 
     # ===== 发布 =====
     def add_publication(self, publication: Publication) -> Publication:

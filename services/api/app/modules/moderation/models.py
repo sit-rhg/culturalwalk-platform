@@ -16,7 +16,7 @@ import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from sqlalchemy import DateTime, Enum, String, Text, UniqueConstraint, Uuid
+from sqlalchemy import DateTime, Enum, Index, String, Text, UniqueConstraint, Uuid, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -195,6 +195,15 @@ class Publication(Base):
         # 同一投稿用同一个 key 重试只产生一条发布记录。
         UniqueConstraint(
             "submission_id", "publish_key", name="uq_publications_submission_publish_key"
+        ),
+        # 一条路线同时只能有一条 PUBLISHED（docs/02 §5）。应用层的「先查后插」挡不住
+        # 并发：两个请求都读到没有发布记录，然后各插一条。这条部分唯一索引是最终防线。
+        Index(
+            "uq_publications_route_published",
+            "route_id",
+            unique=True,
+            sqlite_where=text("state = 'PUBLISHED'"),
+            postgresql_where=text("state = 'PUBLISHED'"),
         ),
     )
 

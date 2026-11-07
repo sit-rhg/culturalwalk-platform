@@ -23,10 +23,12 @@ def test_nodes_without_prices_count_as_unknown_not_zero() -> None:
 
 def test_partial_price_still_contributes_its_known_end() -> None:
     # 只填一侧时另一侧不猜；已知的那一端照常计入，但整站仍算「未填全」。
+    # 上限不能低于下限：旧断言在这里得到 max_total=500 < min_total=800，
+    # 也就是把倒挂区间当成正确结果，页面上会显示「¥800 - ¥500」。
     totals = summarize_cost([(None, 500), (800, None)])
 
     assert totals.min_total == 800
-    assert totals.max_total == 500
+    assert totals.max_total == 800
     assert totals.unknown_count == 2
 
 

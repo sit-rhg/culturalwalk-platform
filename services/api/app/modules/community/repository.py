@@ -210,6 +210,19 @@ class CommunityRepository:
         rows = self.db.execute(stmt.limit(limit))
         return [(route_id, last_at, int(fav_count)) for route_id, last_at, fav_count in rows]
 
+    def published_at_of(self, route_id: uuid.UUID) -> datetime | None:
+        """这条路线当前发布记录的 published_at。
+
+        不能用 RouteVersion.created_at 顶替：版本在提交审核时就冻结了，发布可能
+        在几天之后，两者差出多少完全取决于审核排期。对外展示的发布时间只能取
+        发布记录自己的时间。
+        """
+        stmt = select(Publication.published_at).where(
+            Publication.route_id == route_id,
+            Publication.state == PublicationState.PUBLISHED,
+        )
+        return self.db.scalars(stmt).first()
+
     def latest_versions(self, route_ids: list[uuid.UUID]) -> dict[uuid.UUID, RouteVersion]:
         """批量取每条路线「发布记录绑定的」版本行（内容取 version.snapshot）。"""
         if not route_ids:

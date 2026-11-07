@@ -131,3 +131,26 @@ def test_get_detail_after_reload_keeps_cost(
         "currency": "CNY",
         "unknown_count": 0,
     }
+
+
+def test_only_min_and_only_max_nodes_never_invert_the_range(
+    client: TestClient, db_session: Session, user_headers: dict[str, str]
+) -> None:
+    """A 站只有最低价、B 站只有最高价：拼出来的区间不能倒挂（¥1000 - ¥50）。"""
+    draft = _draft(db_session)
+    cheaper = _add_place(db_session, "只有最低价")
+    pricier = _add_place(db_session, "只有最高价")
+
+    detail = _put_nodes(
+        client,
+        draft.id,
+        [
+            _node(cheaper, price_min=1000),
+            _node(pricier, price_max=50),
+        ],
+        user_headers,
+    )
+
+    assert detail["cost"]["min_total"] == 1000
+    assert detail["cost"]["max_total"] == 1000
+    assert detail["cost"]["unknown_count"] == 2

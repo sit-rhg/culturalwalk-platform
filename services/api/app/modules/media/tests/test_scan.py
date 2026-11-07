@@ -190,3 +190,31 @@ def _keys(store: LocalObjectStore, prefix: str) -> Iterator[str]:
             key = path.relative_to(root).as_posix()
             if key.startswith(prefix + "/"):
                 yield key
+
+
+def _jpeg_with_orientation(orientation: int = 6, size: tuple[int, int] = (640, 480)) -> bytes:
+    """orientation=6 是「显示时顺时针转 90°」：文件里存 640×480，摆正后应为 480×640。"""
+    image = Image.new("RGB", size, (200, 40, 40))
+    exif = Image.Exif()
+    exif[0x0112] = orientation
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", exif=exif)
+    return buffer.getvalue()
+
+
+def test_scan_applies_exif_orientation(
+    session_factory: sessionmaker[Session], store: LocalObjectStore
+) -> None:
+    """竖拍照片不能横躺：重编码丢掉 EXIF 之前必须先把像素摆正。"""
+    with session_factory() as session:
+        asset = _stage(session, store, _jpeg_with_orientation(6))
+
+        out = MediaService(session).scan_asset(asset.id, store=store)
+        session.commit()
+
+        assert out.scan_state == "clean"
+        assert (out.width, out.height) == (480, 640)
+        clean_key = next(iter(_keys(store, "clean")))
+        with Image.open(io.BytesIO(store.get(clean_key))) as cleaned:
+            assert cleaned.size == (480, 640)
+            assert len(cleaned.getexif()) == 0

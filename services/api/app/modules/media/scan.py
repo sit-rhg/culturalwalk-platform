@@ -17,7 +17,7 @@ from __future__ import annotations
 import io
 from dataclasses import dataclass
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 # 12000 × 12000 已经远超手机拍照；再大基本可判定为解压炸弹。
 MAX_SIDE = 12_000
@@ -72,17 +72,21 @@ def scan_image(raw: bytes, declared_mime: str, *, thumb_max_px: int = THUMB_MAX_
         raise ScanRejected("MEDIA_UNDECODABLE", "图片无法解码") from exc
 
     try:
-        with Image.open(io.BytesIO(raw)) as image:
-            image.load()
-            mime = _FORMATS.get(image.format or "")
+        with Image.open(io.BytesIO(raw)) as opened:
+            opened.load()
+            # 格式要在 open 的对象上读：exif_transpose 会产出一张内存图，format 是空的。
+            mime = _FORMATS.get(opened.format or "")
             if mime is None:
                 raise ScanRejected(
-                    "MEDIA_FORMAT_UNSUPPORTED", f"不支持的图片格式：{image.format or '未知'}"
+                    "MEDIA_FORMAT_UNSUPPORTED", f"不支持的图片格式：{opened.format or '未知'}"
                 )
             if mime != declared_mime:
                 raise ScanRejected(
                     "MEDIA_MIME_MISMATCH", f"文件实际是 {mime}，与声明的 {declared_mime} 不符"
                 )
+            # EXIF 里的方向是「显示时怎么转」的指令，像素本身没转。重编码不写
+            # exif，如果不在这里摆正，竖拍照片在页面上就会躺倒，而且宽高与实际相反。
+            image = ImageOps.exif_transpose(opened) or opened
             width, height = image.size
             if max(width, height) > MAX_SIDE or width * height > MAX_PIXELS:
                 raise ScanRejected(
@@ -92,6 +96,7 @@ def scan_image(raw: bytes, declared_mime: str, *, thumb_max_px: int = THUMB_MAX_
             return ScanOutcome(
                 data=_reencode(image, mime),
                 mime=mime,
+                # 对外报摆正之后的宽高，前端按它排版才不会把竖图当成横图。
                 width=width,
                 height=height,
                 thumbnail=_thumbnail(image, thumb_max_px),

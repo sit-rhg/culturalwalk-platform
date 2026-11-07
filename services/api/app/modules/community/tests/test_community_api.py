@@ -482,3 +482,25 @@ def test_writes_are_audited(
         "favorite.delete",
     }
     assert {row.object_type for row in rows} == {"comment", "favorite"}
+
+
+def test_route_detail_published_at_comes_from_publication(
+    client: TestClient, db_session: Session
+) -> None:
+    """对外发布时间取发布记录，不取版本冻结时间。
+
+    版本在提交审核时就冻结了，发布可能排在几天之后；拿 created_at 顶替会让详情页
+    显示的发布时间早于审核通过时间，和列表里的排序口径也对不上。
+    """
+    route_id = _published_route(db_session)
+    publication = db_session.scalars(
+        select(Publication).where(Publication.route_id == route_id)
+    ).one()
+    published_at = publication.published_at + timedelta(days=3)
+    publication.published_at = published_at
+    db_session.commit()
+
+    response = client.get(f"{ROUTES_API}/{route_id}")
+
+    assert response.status_code == 200, response.text
+    assert datetime.fromisoformat(response.json()["published_at"]) == published_at

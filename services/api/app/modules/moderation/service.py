@@ -23,6 +23,7 @@ from typing import Any
 
 from pydantic import BaseModel
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -560,7 +561,21 @@ class ModerationService:
             publish_key=idempotency_key,
             publish_hash=request_hash,
         )
-        self.repo.add_publication(publication)
+        try:
+            with self.db.begin_nested():
+                self.repo.add_publication(publication)
+        except IntegrityError:
+            # 并发发布兜底：两个请求都通过了上面的预检，最后只能由部分唯一索引裁决。
+            # 用 SAVEPOINT 包住插入，失败只回滚这一小段，外层事务仍可继续读写。
+            concurrent = self.repo.get_publication_by_publish_key(
+                submission_id=submission.id, key=idempotency_key
+            )
+            if concurrent is not None and concurrent.publish_hash == request_hash:
+                return concurrent
+            raise Conflict(
+                "该路线已有处于发布状态的版本，请先下线",
+                code="ROUTE_ALREADY_PUBLISHED",
+            ) from None
         # 发布后草稿才有稳定的 route：回填到投稿与版本，前端详情页才能串起来。
         submission.route_id = route_id
         self.audit.write(
@@ -579,11 +594,15 @@ class ModerationService:
         """草稿第一次发布时分配路线 ID，并回填到该草稿的版本行。
 
         用 UUID 而不是自增：route_id 是公开读取的标识，不能暴露内部计数。
+
+        这里必须是**确定性**的（由 draft_id 派生）。否则两个请求同时首次发布同一
+        草稿时会各生成一个随机 route_id，部分唯一索引按 route_id 判重就拦不住，
+        两条 PUBLISHED 仍然会落库。
         """
         route_id = (draft.route_id if draft is not None else None) or version.route_id
         if route_id is not None:
             return route_id
-        route_id = uuid.uuid4()
+        route_id = uuid.uuid5(uuid.NAMESPACE_URL, f"culturalwalk:route-draft:{version.draft_id}")
         if draft is not None:
             draft.route_id = route_id
         self.db.execute(
