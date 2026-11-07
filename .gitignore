@@ -80,3 +80,8 @@ pytest-of-*/
 apps/web/test-results/
 apps/web/playwright-report/
 apps/web/blob-report/
+
+# ---- 后台 worker 启动脚本的输出（run_worker.bat 重定向产物）----
+services/api/*.err
+services/api/*.out
+services/api/*.db
