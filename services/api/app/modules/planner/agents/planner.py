@@ -11,6 +11,7 @@ from typing import Final
 
 from app.modules.planner.agents.base import PlanContext
 from app.modules.planner.models import AgentName
+from app.modules.planner.schemas import TransportMode
 
 # 一天能塞几个点，取决于用户选的节奏。数值来自 docs/02 §2.5 的默认建议。
 PER_DAY_BY_PACE: Final[dict[str, int]] = {"relaxed": 2, "normal": 3, "packed": 4}
@@ -31,7 +32,7 @@ class PlannerAgent:
         parts = _day_parts(ctx.preferences.get("day_parts"))
         pace_cap = PER_DAY_BY_PACE.get(str(ctx.preferences.get("pace", "normal")), 3)
         per_day = min(pace_cap, len(parts))
-        transport = str(ctx.preferences.get("transport", "walk"))
+        transport = _primary_transport(ctx.preferences.get("transport"))
 
         schedule: list[dict[str, object]] = []
         for index, candidate in enumerate(ctx.candidates):
@@ -67,3 +68,18 @@ def _day_parts(raw: object) -> tuple[str, ...]:
         if wanted:
             return tuple(sorted(wanted, key=DEFAULT_DAY_PARTS.index))
     return DEFAULT_DAY_PARTS
+
+
+def _primary_transport(raw: object) -> str:
+    """用户勾的是一组「可以接受」的出行方式，日程项按契约只能放一个。
+
+    取第一个合法值（前端按固定顺序展示，第一个就是用户最默认的那个）；
+    没有合法值就退回 walk —— 这里是生成阶段，不该再抛 422 让一次生成白等。
+    """
+    values = raw if isinstance(raw, (list, tuple)) else [raw]
+    for value in values:
+        try:
+            return TransportMode(str(value)).value
+        except ValueError:
+            continue
+    return TransportMode.WALK.value

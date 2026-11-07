@@ -159,6 +159,36 @@ def test_planner_fills_days_in_order_and_respects_pace() -> None:
     assert [item["start_time"] for item in ctx.schedule] == ["09:00", "14:00"]
 
 
+def test_planner_takes_first_transport_from_preference_list() -> None:
+    # 前端默认勾「步行 + 地铁」；日程项按契约只能放一个，取用户排序里的第一个。
+    # 以前这里直接 str(list)，写进 varchar(16) 会溢出并打挂 worker（P-28）。
+    ctx = make_context(days=1, pace="packed")
+    ctx.preferences["transport"] = ["metro", "walk"]
+    ctx = ResearcherAgent(fake_source).run(ctx)
+    ctx = PlannerAgent().run(ctx)
+
+    assert {item["transport"] for item in ctx.schedule} == {"metro"}
+
+
+def test_planner_falls_back_to_walk_for_unknown_transport() -> None:
+    ctx = make_context(days=1)
+    ctx.preferences["transport"] = ["火箭"]
+    ctx = ResearcherAgent(fake_source).run(ctx)
+    ctx = PlannerAgent().run(ctx)
+
+    assert {item["transport"] for item in ctx.schedule} == {"walk"}
+
+
+def test_planner_still_accepts_single_string_transport() -> None:
+    # 老调用方（测试/内部）传的是单个字符串，不能被这次修复破坏。
+    ctx = make_context(days=1)
+    ctx.preferences["transport"] = "bike"
+    ctx = ResearcherAgent(fake_source).run(ctx)
+    ctx = PlannerAgent().run(ctx)
+
+    assert {item["transport"] for item in ctx.schedule} == {"bike"}
+
+
 def test_researcher_dedupes_and_caps_candidates() -> None:
     duplicated = [make_candidates()[0], make_candidates()[0], *make_candidates()[1:]]
     ctx = ResearcherAgent(lambda _: duplicated).run(make_context(days=1))
