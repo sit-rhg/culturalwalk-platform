@@ -295,7 +295,7 @@ class CommunityService:
             **summary.model_dump(),
             version_id=version.id,
             content_hash=version.content_hash,
-            published_at=_as_utc(version.created_at),
+            published_at=self.repo.published_at_of(route_id) or _as_utc(version.created_at),
             days=self._days(self.repo.snapshot_of(version)),
             is_favorited=is_favorited,
         )

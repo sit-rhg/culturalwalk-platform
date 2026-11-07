@@ -117,6 +117,11 @@ def test_匿名可看主页且只返回公开字段与已发布路线(client: Te
 
 
 def test_每条路线只返回最新版本(client: TestClient, db_session: Session) -> None:
+    """同一 route 下线再发新版本：主页只展示当前发布的那一版。
+
+    一条路线同时只能有一条 PUBLISHED（0014 的部分唯一索引），所以旧版本这条必须
+    是 UNPUBLISHED —— 真实流程里它也确实是被下线之后才发的新版。
+    """
     first_id = uuid.uuid4()
     _published_route(
         db_session,
@@ -124,6 +129,7 @@ def test_每条路线只返回最新版本(client: TestClient, db_session: Sessi
         title="旧标题",
         route_id=first_id,
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        publication_state=PublicationState.UNPUBLISHED,
     )
     _published_route(
         db_session,
