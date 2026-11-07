@@ -121,8 +121,8 @@ class IdentityRepository:
         )
         # Session.execute 的静态类型是 Result，rowcount 只在 CursorResult 上有；
         # 这条语句就是 DML，运行时拿到的必然是 CursorResult。
+        # 不必再 flush：execute 之前挂起的变更已经被刷出去了，rowcount 就是本条语句的结果。
         result = cast(CursorResult[Any], self.db.execute(stmt))
-        self.db.flush()
         return result.rowcount == 1
 
     def revoke_all_for_user(self, user_id: uuid.UUID, when: datetime) -> int:

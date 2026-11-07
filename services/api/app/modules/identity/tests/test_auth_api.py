@@ -158,6 +158,12 @@ def test_refresh_race_loses_at_the_conditional_revoke(
     assert second.status_code == 401, second.text
     assert second.json()["error"]["code"] == "UNAUTHORIZED"
 
+    # 输掉的那一方被拦下，不等于赢家被误伤：它换到的新 refresh 必须仍然可用。
+    # 先撤掉上面的快照替换，否则这里读到的还是撤销发生之前的旧行。
+    monkeypatch.undo()
+    winner = client.post(REFRESH, json={"refresh_token": first.json()["refresh_token"]})
+    assert winner.status_code == 200, winner.text
+
 
 def test_logout_needs_no_body_and_revokes_current_session(client: TestClient) -> None:
     """契约的 /auth/logout 没有请求体：只凭 access 令牌里的 sid 定位该退哪一次会话。"""
