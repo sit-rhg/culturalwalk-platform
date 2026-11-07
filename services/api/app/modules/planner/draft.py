@@ -22,7 +22,12 @@ from dataclasses import dataclass
 from typing import Final, Protocol
 
 from app.core.errors import AppError, ServiceUnavailable
-from app.modules.planner.models import Itinerary, ItineraryDay, ItineraryItem
+from app.modules.planner.models import (
+    TRANSPORT_VALUES,
+    Itinerary,
+    ItineraryDay,
+    ItineraryItem,
+)
 
 TITLE_MAX: Final[int] = 60
 SUMMARY_MAX: Final[int] = 300
@@ -30,7 +35,6 @@ MINUTES_PER_LEG: Final[int] = 15
 STAY_MIN: Final[int] = 10
 STAY_MAX: Final[int] = 480
 MAX_THEMES: Final[int] = 8
-TRANSPORT_VALUES: Final[frozenset[str]] = frozenset({"walk", "metro", "bus", "taxi", "bike"})
 # 幂等键里带多少位内容摘要：够区分「改过」和「没改」，又不至于把 key 撑到 64 位上限。
 KEY_HASH_CHARS: Final[int] = 16
 

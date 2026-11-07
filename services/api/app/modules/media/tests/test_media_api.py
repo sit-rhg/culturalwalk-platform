@@ -199,11 +199,64 @@ def test_get_permissions_and_url_visibility(
     assert cleaned.json()["url"].startswith("http://localhost:9000/culturalwalk/")
 
 
+def test_intent_replay_after_complete_does_not_hand_out_a_writable_ticket(
+    client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    """扫描开始后同一个幂等键不能再换一张可写 policy。
+
+    否则 900 秒内可以按当前 object_key 再签一次，直接覆盖已过审的对象。
+    """
+    me = uuid.uuid4()
+    key = str(uuid.uuid4())
+    asset_id = _intent(client, me, key=key).json()["asset_id"]
+    assert _complete(client, asset_id, me).status_code == 202
+
+    replay = _intent(client, me, key=key)
+
+    assert replay.status_code == 409
+    assert replay.json()["error"]["code"] == "MEDIA_ALREADY_UPLOADED"
+    with session_factory() as db:
+        assert len(list(db.scalars(select(MediaAsset)))) == 1
+    assert _actions(session_factory, asset_id) == ["media.intent.create", "media.complete"]
+
+
+def test_intent_replay_after_expiry_asks_for_a_new_intent(
+    client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    me = uuid.uuid4()
+    key = str(uuid.uuid4())
+    asset_id = _intent(client, me, key=key).json()["asset_id"]
+    with session_factory() as db:
+        asset = db.get(MediaAsset, uuid.UUID(asset_id))
+        asset.upload_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        db.commit()
+
+    replay = _intent(client, me, key=key)
+
+    assert replay.status_code == 409
+    assert replay.json()["error"]["code"] == "MEDIA_UPLOAD_EXPIRED"
+
+
+def test_mark_clean_rejects_asset_that_never_finished_upload(
+    client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    """pending 直接 clean 会放行一个根本不存在于对象存储的文件。"""
+    me = uuid.uuid4()
+    asset_id = uuid.UUID(_intent(client, me).json()["asset_id"])
+
+    with session_factory() as db:
+        with pytest.raises(Conflict) as rejected:
+            MediaService(db).mark_clean(asset_id)
+        assert rejected.value.code == "MEDIA_NOT_UPLOADED"
+        assert db.get(MediaAsset, asset_id).scan_state is ScanState.PENDING
+
+
 def test_reference_gate_blocks_until_clean_and_publish_is_idempotent(
     client: TestClient, session_factory: sessionmaker[Session]
 ) -> None:
     me = uuid.uuid4()
     asset_id = uuid.UUID(_intent(client, me).json()["asset_id"])
+    _complete(client, str(asset_id), me)
 
     with session_factory() as db:
         service = MediaService(db)
@@ -222,6 +275,9 @@ def test_reference_gate_blocks_until_clean_and_publish_is_idempotent(
         assert asset.published_at is not None
     assert _actions(session_factory, str(asset_id)) == [
         "media.intent.create",
+        # 修掉「pending 可直接 clean」之后，引用闸门的用例必须先走一次 complete，
+        # 审计里也就多出这一条；这不是放宽断言，是把真实状态机的中间步骤补回来。
+        "media.complete",
         "media.scan.clean",
         "media.publish",
     ]

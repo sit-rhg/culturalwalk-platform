@@ -12,7 +12,19 @@ from fastapi import Depends, Header
 from jose import JWTError, jwt
 
 from app.core.config import settings
+from app.core.db import DbDep
 from app.core.errors import Forbidden, Unauthorized
+
+# 「这个 sid 还能不能用」的检查由 identity 模块注册进来。
+# 放在这里而不是直接 import identity.models，是为了守住依赖方向：业务模块 -> core，
+# 反过来会绕出一个 core -> identity -> core 的环。返回 True 表示会话已失效。
+SessionGuard = Callable[[object, str], bool]
+_session_guard: SessionGuard | None = None
+
+
+def register_session_guard(guard: SessionGuard) -> None:
+    global _session_guard
+    _session_guard = guard
 
 
 @dataclass(frozen=True)
@@ -47,12 +59,34 @@ def create_access_token(
 
 def decode_token(token: str) -> dict:
     try:
-        return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_alg])
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=[settings.jwt_alg],
+        )
     except JWTError as exc:  # 过期、签名错、格式错统一 401
         raise Unauthorized("登录已失效，请重新登录") from exc
+    # python-jose 的 require_exp 在部分版本里会被静默忽略，这里显式再挡一次：
+    # 没有 exp 的令牌永不过期，等于一把万能钥匙。
+    if "exp" not in payload or "sub" not in payload:
+        raise Unauthorized("登录已失效，请重新登录")
+    return payload
 
 
-def _user_from_auth_header(authorization: str | None) -> CurrentUser | None:
+def _assert_session_active(db: object, session_id: object) -> None:
+    """登出后 access 令牌里的 sid 立刻失效，不用等 900 秒过期。"""
+    if session_id is None:
+        return  # ID-02 之前签发的旧令牌没有 sid，只能等它自然过期
+    if _session_guard is None:
+        # 没注册检查器就放行会静默关掉吊销能力，宁可让这种装配错误当场暴露。
+        raise Unauthorized("登录状态校验不可用，请重新登录")
+    if _session_guard(db, str(session_id)):
+        raise Unauthorized("登录已失效，请重新登录")
+
+
+def _user_from_auth_header(
+    authorization: str | None, db: object, *, check_session: bool = True
+) -> CurrentUser | None:
     if not authorization:
         return None
     scheme, _, token = authorization.partition(" ")
@@ -61,6 +95,8 @@ def _user_from_auth_header(authorization: str | None) -> CurrentUser | None:
     payload = decode_token(token)
     if payload.get("typ") != "access":
         raise Unauthorized("令牌类型错误")
+    if check_session:
+        _assert_session_active(db, payload.get("sid"))
     return CurrentUser(
         id=payload["sub"],
         username=payload["username"],
@@ -70,16 +106,33 @@ def _user_from_auth_header(authorization: str | None) -> CurrentUser | None:
 
 
 def optional_user(
+    db: DbDep,
     authorization: Annotated[str | None, Header()] = None,
 ) -> CurrentUser | None:
     """公开接口用它：有 token 就带上用户（用于 is_favorited 之类）。"""
-    return _user_from_auth_header(authorization)
+    return _user_from_auth_header(authorization, db)
 
 
 def require_user(
+    db: DbDep,
     authorization: Annotated[str | None, Header()] = None,
 ) -> CurrentUser:
-    user = _user_from_auth_header(authorization)
+    user = _user_from_auth_header(authorization, db)
+    if user is None:
+        raise Unauthorized("请先登录")
+    return user
+
+
+def require_user_stale_ok(
+    db: DbDep,
+    authorization: Annotated[str | None, Header()] = None,
+) -> CurrentUser:
+    """登出专用：令牌签名有效即可，会话已经被撤销也放行。
+
+    退出是幂等操作（契约 204，重复调用不许翻脸），所以这里不能因为
+    「sid 已失效」就把第二次登出打成 401；其他端点一律走 require_user。
+    """
+    user = _user_from_auth_header(authorization, db, check_session=False)
     if user is None:
         raise Unauthorized("请先登录")
     return user
@@ -120,5 +173,6 @@ require_admin = require_role("admin", "editor")
 
 
 CurrentUserDep = Annotated[CurrentUser, Depends(require_user)]
+LogoutUserDep = Annotated[CurrentUser, Depends(require_user_stale_ok)]
 OptionalUserDep = Annotated[CurrentUser | None, Depends(optional_user)]
 AdminDep = Annotated[CurrentUser, Depends(require_admin)]

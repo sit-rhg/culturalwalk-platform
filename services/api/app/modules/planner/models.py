@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime, time
 from enum import StrEnum
-from typing import Any
+from typing import Any, Final
 
 from sqlalchemy import (
     JSON,
@@ -31,6 +31,11 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db import Base
+
+# 契约 TransportMode 的取值。排班、挑刺、转草稿三处共用一份，
+# 免得各抄一份之后有人只改了其中一处。
+TRANSPORT_VALUES: Final[frozenset[str]] = frozenset({"walk", "metro", "bus", "taxi", "bike"})
+DEFAULT_TRANSPORT: Final[str] = "walk"
 
 
 class PlanState(StrEnum):

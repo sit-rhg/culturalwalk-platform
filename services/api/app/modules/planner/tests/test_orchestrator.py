@@ -159,6 +159,21 @@ def test_planner_fills_days_in_order_and_respects_pace() -> None:
     assert [item["start_time"] for item in ctx.schedule] == ["09:00", "14:00"]
 
 
+def test_planner_stores_single_transport_mode_instead_of_str_of_list() -> None:
+    """transport 是数组；对 list 直接 str() 会得到 "['metro', 'walk']"（17 字符）。
+
+    itinerary_items.transport 是 String(16)，PG 上写库就炸；SQLite 不校验长度，
+    所以单测全绿也拦不住 —— 这里同时钉住「只落一个合法值」和「长度不超列宽」。
+    """
+    ctx = make_context(days=1)
+    ctx.preferences["transport"] = ["metro", "walk"]
+    ctx = ResearcherAgent(fake_source).run(ctx)
+    ctx = PlannerAgent().run(ctx)
+
+    assert [item["transport"] for item in ctx.schedule] == ["metro"] * len(ctx.schedule)
+    assert all(len(str(item["transport"])) <= 16 for item in ctx.schedule)
+
+
 def test_researcher_dedupes_and_caps_candidates() -> None:
     duplicated = [make_candidates()[0], make_candidates()[0], *make_candidates()[1:]]
     ctx = ResearcherAgent(lambda _: duplicated).run(make_context(days=1))
@@ -200,6 +215,33 @@ def test_critic_flags_over_budget_duplicate_and_far_leg() -> None:
     assert "too_far" in rules
     # 只看不修：排班表一个字都不许动
     assert ctx.schedule == before
+
+
+def test_critic_uses_most_permissive_threshold_for_multi_mode_travel() -> None:
+    """同一段 5 公里：只选步行算「走不过去」，同时选了地铁就不该报警。"""
+
+    def context_with(preferences: dict[str, object]) -> PlanContext:
+        return PlanContext(
+            city="长沙",
+            days=1,
+            people=1,
+            budget_total=100000,
+            preferences=preferences,
+            candidates=[
+                Candidate(place_id="p1", name="A", lat=28.1900, lon=112.9700),
+                Candidate(place_id="p2", name="B", lat=28.2350, lon=112.9700),
+            ],
+            schedule=[
+                schedule_item("p1", order=1, name="A"),
+                schedule_item("p2", order=2, name="B"),
+            ],
+        )
+
+    walking = CriticAgent().run(context_with({"transport": ["walk"]}))
+    mixed = CriticAgent().run(context_with({"transport": ["metro", "walk"]}))
+
+    assert "too_far" in [issue["rule"] for issue in walking.issues]
+    assert "too_far" not in [issue["rule"] for issue in mixed.issues]
 
 
 def test_critic_reports_no_schedule_when_candidates_empty() -> None:

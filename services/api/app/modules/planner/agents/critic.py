@@ -10,8 +10,8 @@ from __future__ import annotations
 import math
 from typing import Final
 
-from app.modules.planner.agents.base import Candidate, PlanContext
-from app.modules.planner.models import AgentName
+from app.modules.planner.agents.base import Candidate, PlanContext, selected_transports
+from app.modules.planner.models import DEFAULT_TRANSPORT, AgentName
 
 # 同一段行程两站之间能接受的最长距离（米），按交通方式放宽。
 # 数值是拍出来的经验值，注释在此是为了以后有人改它时知道它原本为什么是这些数。
@@ -93,8 +93,9 @@ def _duplicate_issues(ctx: PlanContext) -> list[dict[str, object]]:
 
 def _distance_issues(ctx: PlanContext, by_place: dict[str, Candidate]) -> list[dict[str, object]]:
     """同一天相邻两站走不过去就报一条，附上实际距离方便判断要不要打车。"""
-    transport = str(ctx.preferences.get("transport", "walk"))
-    threshold = MAX_LEG_METERS.get(transport, MAX_LEG_METERS_DEFAULT)
+    # 多选时按最宽松的那一种算：用户既然愿意坐地铁，5 公里就不该报「走不过去」。
+    modes = selected_transports(ctx.preferences) or (DEFAULT_TRANSPORT,)
+    threshold = max(MAX_LEG_METERS.get(mode, MAX_LEG_METERS_DEFAULT) for mode in modes)
     issues: list[dict[str, object]] = []
     previous: dict[str, object] | None = None
     for item in ctx.schedule:

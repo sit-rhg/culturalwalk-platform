@@ -5,7 +5,12 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# 仓库里的默认值：只够本机跑，一旦带进 demo/prod 就等于把签名密钥公开了。
+_DEFAULT_JWT_SECRET = "dev-only-change-me"
+_SHARED_ENVS = frozenset({"demo", "prod", "production"})
 
 
 class Settings(BaseSettings):
@@ -52,6 +57,22 @@ class Settings(BaseSettings):
     plan_max_days: int = 7
     review_lease_minutes: int = 30
     public_cache_seconds: int = 60
+
+    @model_validator(mode="after")
+    def _reject_shared_defaults(self) -> Settings:
+        """demo/prod 不许用仓库里的默认密钥。
+
+        默认值在 git 里躺着，任何人都能拿它签一个 role=admin 的令牌 —— 这不是
+        「记得改配置」的提醒，是启动即失败的硬闸；本地 local 环境不受影响。
+        """
+        if self.env not in _SHARED_ENVS:
+            return self
+        if self.jwt_secret == _DEFAULT_JWT_SECRET or len(self.jwt_secret) < 32:
+            raise ValueError(
+                "非 local 环境必须通过 JWT_SECRET 提供至少 32 字符的独立密钥"
+                "（当前仍是仓库默认值，任何人都能伪造管理员令牌）"
+            )
+        return self
 
 
 @lru_cache
