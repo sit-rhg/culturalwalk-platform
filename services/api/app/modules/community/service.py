@@ -26,15 +26,17 @@ from app.core.errors import AppError, Forbidden, NotFound, Unauthorized, Validat
 from app.core.pagination import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
-    decode_cursor,
     decode_payload,
-    encode_cursor,
     encode_payload,
 )
 from app.modules.audit.service import AuditService
 from app.modules.catalog.service import CatalogService
 from app.modules.community.models import Comment, CommentStatus, Favorite
-from app.modules.community.repository import CommentPosition, CommunityRepository
+from app.modules.community.repository import (
+    CommentPosition,
+    CommunityRepository,
+    RoutePosition,
+)
 from app.modules.community.schemas import (
     AuthorOut,
     CommentListOut,
@@ -137,6 +139,34 @@ def _decode_comment_cursor(cursor: str) -> CommentPosition:
         raise AppError("分页游标无效", code="INVALID_CURSOR") from exc
 
 
+def _encode_route_cursor(position: RoutePosition, sort: str) -> str:
+    """路线列表游标：收藏数 + 发布时间 + route_id，外加排序模式。
+
+    默认按收藏数排，位置里必须带收藏数；带上 sort 是为了把「hot 的游标
+    拿去翻 latest」直接判成坏游标，而不是悄悄错位。收藏数在翻页期间会变，
+    所以 keyset 用的是编码那一刻的值——可能漏，不会重。
+    """
+    favorite_count, at, route_id = position
+    return encode_payload(
+        {
+            "f": favorite_count,
+            "c": _as_utc(at).isoformat(),
+            "i": str(route_id),
+            "s": sort,
+        }
+    )
+
+
+def _decode_route_cursor(cursor: str, sort: str) -> RoutePosition:
+    data = decode_payload(cursor)
+    try:
+        if str(data["s"]) != sort:
+            raise ValueError("排序模式与游标不一致")
+        return int(data["f"]), datetime.fromisoformat(data["c"]), uuid.UUID(str(data["i"]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise AppError("分页游标无效", code="INVALID_CURSOR") from exc
+
+
 @dataclass(frozen=True)
 class _RouteFilter:
     """公开列表的筛选条件。JSON 快照字段跨库查询不可移植，统一在 Python 侧过滤。"""
@@ -194,7 +224,7 @@ class CommunityService:
         duration: str | None = None,
         budget_max: int | None = None,
         channel: str | None = None,
-        sort: str = "latest",
+        sort: str = "hot",
         cursor: str | None = None,
         limit: int = DEFAULT_LIMIT,
     ) -> tuple[list[RouteSummaryOut], str | None]:
@@ -209,49 +239,49 @@ class CommunityService:
             budget_max=budget_max,
             channel=channel,
         )
-        descending = sort != "oldest"
-        after = decode_cursor(cursor) if cursor else None
+        after = _decode_route_cursor(cursor, sort) if cursor else None
 
-        matched: list[tuple[uuid.UUID, RouteVersion, datetime]] = []
+        matched: list[tuple[uuid.UUID, RouteVersion, datetime, int]] = []
         scan_after = after
         exhausted = False
         batches = 0
         batch_size = max(limit + 1, DEFAULT_LIMIT)
-        # 先按发布时间分页取候选，再在 Python 里按 JSON 快照过滤：
+        # 先按排序键分页取候选，再在 Python 里按 JSON 快照过滤：
         # 过滤会淘汰候选，所以循环到凑满 limit+1 条或候选扫完为止。
         while len(matched) <= limit and not exhausted and batches < _MAX_SCAN_BATCHES:
             rows = self.repo.latest_published_positions(
                 after=scan_after,
                 limit=batch_size,
-                descending=descending,
+                sort=sort,
             )
             batches += 1
             if len(rows) < batch_size:
                 exhausted = True
             if not rows:
                 break
-            versions = self.repo.latest_versions([route_id for route_id, _ in rows])
-            for route_id, last_at in rows:
+            versions = self.repo.latest_versions([route_id for route_id, _, _ in rows])
+            for route_id, last_at, favorite_count in rows:
                 version = versions.get(route_id)
                 if version is None:
                     continue
                 if not route_filter.matches(self.repo.snapshot_of(version)):
                     continue
-                matched.append((route_id, version, last_at))
+                matched.append((route_id, version, last_at, favorite_count))
                 if len(matched) > limit:
                     break
-            scan_after = (rows[-1][1], rows[-1][0])
+            scan_after = (rows[-1][2], rows[-1][1], rows[-1][0])
 
         page = matched[:limit]
         if len(matched) > limit:
             last = page[-1]
-            next_cursor: str | None = encode_cursor(last[2], last[0])
+            next_cursor: str | None = _encode_route_cursor((last[3], last[2], last[0]), sort)
         elif not exhausted and scan_after is not None and page:
             # 还有候选没扫完（批次上限），游标指向本次扫到的位置，下一页继续。
-            next_cursor = encode_cursor(scan_after[0], scan_after[1])
+            next_cursor = _encode_route_cursor(scan_after, sort)
         else:
             next_cursor = None
-        return self._summaries([(route_id, version) for route_id, version, _ in page]), next_cursor
+        page_summaries = [(route_id, version) for route_id, version, _, _ in page]
+        return self._summaries(page_summaries), next_cursor
 
     def get_route(
         self, *, route_id: uuid.UUID, viewer_id: uuid.UUID | None = None
