@@ -338,3 +338,15 @@ def test_delete_locked_draft_is_409(
     response = client.delete(f"{API}/{draft['id']}", headers=user_headers)
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "DRAFT_NOT_DELETABLE"
+
+
+# ===== 模型与迁移一致性 =====
+def test_channel_server_default_matches_migration() -> None:
+    """0011_route_channel 给 channel 写了 server_default='user'，模型必须一致。
+
+    否则空库重建后 alembic check 会报 modify_default 漂移；planner 的
+    step_index 踩过同一个坑（#116）。
+    """
+    default = RouteDraft.__table__.c.channel.server_default
+    assert default is not None
+    assert str(default.arg) == "user"
