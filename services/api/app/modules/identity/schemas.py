@@ -66,6 +66,9 @@ class ProfileRouteOut(BaseModel):
     cost / comment_count / favorite_count 在契约里都是可选字段，但它们是 community
     的聚合口径（评论数、收藏数由那边数）。identity 不复刻别人的统计规则，
     宁可不返回，也不返回一个数不上口径的值。
+
+    完整的 RouteSummary（含 cost 与两个计数）只有 community 模块的 schemas.py 一份；
+    这里是刻意裁剪的子集，不要再把整份搬回来。
     """
 
     id: uuid.UUID
@@ -85,42 +88,6 @@ class TokenPairOut(BaseModel):
     refresh_token: str
     expires_in: int
     user: UserOut
-
-
-class RouteAuthorOut(BaseModel):
-    """openapi.yaml#RouteSummary.author（内联对象，两个字段都没有 required）。"""
-
-    id: uuid.UUID | None = None
-    username: str | None = None
-
-
-class CostSummaryOut(BaseModel):
-    """openapi.yaml#CostSummary。契约里一个字段都不是 required。"""
-
-    min_total: int | None = None
-    max_total: int | None = None
-    currency: str | None = None
-    unknown_count: int | None = None
-
-
-class RouteSummaryOut(BaseModel):
-    """openapi.yaml#RouteSummary。required 只有 id / title / channel。
-
-    只有 summary / cover_url / duration_minutes 在契约里是 nullable，
-    其余可选字段给非空默认值：宁可少给一个字段，也别回一个契约里没有的 null。
-    """
-
-    id: uuid.UUID
-    title: str
-    channel: str
-    summary: str | None = None
-    cover_url: str | None = None
-    author: RouteAuthorOut | None = None
-    theme_tags: list[str] = Field(default_factory=list)
-    duration_minutes: int | None = None
-    cost: CostSummaryOut | None = None
-    comment_count: int = 0
-    favorite_count: int = 0
 
 
 class UserProfileOut(BaseModel):
