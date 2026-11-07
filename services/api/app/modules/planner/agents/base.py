@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
-from app.modules.planner.models import AgentName
+from app.modules.planner.models import DEFAULT_TRANSPORT, TRANSPORT_VALUES, AgentName
 
 
 @dataclass
@@ -60,6 +60,36 @@ class Agent(Protocol):
     name: AgentName
 
     def run(self, ctx: PlanContext) -> PlanContext: ...
+
+
+def selected_transports(preferences: dict[str, object]) -> tuple[str, ...]:
+    """用户可多选交通方式；返回去重后的合法值，一个都没有就返回空元组。
+
+    请求体里 `transport` 是数组（PlanIn.transport: list[TransportMode]），
+    但历史数据与单测里也有直接塞单个字符串的，两种形状都认。
+
+    绝不能对 list 直接 `str()` —— 那会把 `["walk"]` 存成 `"['walk']"`：
+    17 个字符超出 `itinerary_items.transport` 的 String(16)，PG 上直接写库失败；
+    SQLite 不校验长度，所以只有真库才会炸，单测全绿也发现不了。
+    """
+    raw = preferences.get("transport")
+    if isinstance(raw, str):
+        values: list[object] = [raw]
+    elif isinstance(raw, (list, tuple, set)):
+        values = list(raw)
+    else:
+        values = []
+    picked: list[str] = []
+    for value in values:
+        mode = str(value)
+        if mode in TRANSPORT_VALUES and mode not in picked:
+            picked.append(mode)
+    return tuple(picked)
+
+
+def primary_transport(preferences: dict[str, object]) -> str:
+    """落库用的单一交通方式：用户选的第一个，没选就按步行。"""
+    return (selected_transports(preferences) or (DEFAULT_TRANSPORT,))[0]
 
 
 # 调研员取点位的方式由外部注入：测试给固定清单，线上接 catalog 的 service。

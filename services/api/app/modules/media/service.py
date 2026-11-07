@@ -92,6 +92,17 @@ class MediaService:
             owner_id=owner_id, idempotency_key=idempotency_key
         )
         if existing is not None:
+            # 幂等重放只对「还没确认上传」的资产有效。一旦进了 scanning/clean，
+            # 再按当前 object_key 签一次可写 policy，就等于把已扫描过的 clean 对象
+            # 重新暴露成一个可覆盖的 PUT 地址 —— 上传的内容能绕过扫描。
+            if existing.scan_state is not ScanState.PENDING:
+                raise Conflict(
+                    "该文件已进入扫描流程，不能重复获取上传地址",
+                    code="MEDIA_ALREADY_UPLOADED",
+                )
+            if _as_utc(existing.upload_expires_at) <= utcnow():
+                # 过期票重签也没有意义：签出来的地址一样用不了，明确让前端重新申请。
+                raise Conflict("上传地址已过期，请重新申请", code="MEDIA_UPLOAD_EXPIRED")
             return self._intent_out(existing)
 
         asset_id = uuid.uuid4()
@@ -199,6 +210,10 @@ class MediaService:
             raise Conflict("已拒绝的媒体不能改为通过", code="MEDIA_REJECTED")
         if asset.scan_state is ScanState.CLEAN:
             return self._asset_out(asset)
+        if asset.scan_state is not ScanState.SCANNING:
+            # 没确认上传就 clean，等于跳过了「文件真的传上来了」这一步：
+            # 之后 require_referenceable 会放行一个根本不存在的对象。
+            raise Conflict("文件尚未确认上传，不能标记为扫描通过", code="MEDIA_NOT_UPLOADED")
         asset.scan_state = ScanState.CLEAN
         asset.zone = MediaZone.CLEAN
         asset.url = self._public_url(asset)
@@ -382,6 +397,13 @@ class MediaService:
     # ---------- 出参 ----------
 
     def _intent_out(self, asset: MediaAsset) -> MediaIntentOut:
+        # 上传地址只能指向隔离区。clean/ 下的对象是扫描后的产物，对它签可写地址
+        # 就能用 PUT 覆盖已经过审的内容，所以这里再兜一道，不指望调用方记得。
+        if asset.zone is not MediaZone.QUARANTINE or not asset.object_key.startswith("quarantine/"):
+            raise Conflict(
+                "该文件已不在隔离区，不能重复获取上传地址",
+                code="MEDIA_ALREADY_UPLOADED",
+            )
         ticket = self.signer.presign_upload(
             object_key=asset.object_key,
             mime=asset.mime,

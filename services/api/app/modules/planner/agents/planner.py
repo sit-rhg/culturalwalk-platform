@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from app.modules.planner.agents.base import PlanContext
+from app.modules.planner.agents.base import PlanContext, primary_transport
 from app.modules.planner.models import AgentName
 
 # 一天能塞几个点，取决于用户选的节奏。数值来自 docs/02 §2.5 的默认建议。
@@ -31,7 +31,8 @@ class PlannerAgent:
         parts = _day_parts(ctx.preferences.get("day_parts"))
         pace_cap = PER_DAY_BY_PACE.get(str(ctx.preferences.get("pace", "normal")), 3)
         per_day = min(pace_cap, len(parts))
-        transport = str(ctx.preferences.get("transport", "walk"))
+        # 请求里 transport 是数组；取第一个合法值落库，绝不能 str(list)。
+        transport = primary_transport(ctx.preferences)
 
         schedule: list[dict[str, object]] = []
         for index, candidate in enumerate(ctx.candidates):

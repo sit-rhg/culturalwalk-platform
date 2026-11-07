@@ -247,6 +247,20 @@ def _normalize_username(raw: str) -> str:
     return raw.strip().lower()
 
 
+def session_is_revoked(db: Session, session_id: str) -> bool:
+    """access 令牌里的 sid 是否已不能再用。
+
+    登出、refresh 轮换（旧会话当场作废）、会话被删，三种情况都算失效；
+    sid 不是 UUID 说明令牌是被改过的，也按失效处理。由 core.deps 注册调用。
+    """
+    try:
+        sid = uuid.UUID(session_id)
+    except ValueError:
+        return True
+    session = db.get(LoginSession, sid)
+    return session is None or session.revoked_at is not None
+
+
 def _normalize_email(raw: str | None) -> str | None:
     value = (raw or "").strip().lower()
     return value or None

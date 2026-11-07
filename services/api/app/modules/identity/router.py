@@ -11,7 +11,7 @@ import uuid
 from fastapi import APIRouter, Response, status
 
 from app.core.db import DbDep
-from app.core.deps import CurrentUser, CurrentUserDep
+from app.core.deps import CurrentUser, CurrentUserDep, LogoutUserDep
 from app.core.errors import Unauthorized
 from app.modules.identity.schemas import (
     LoginIn,
@@ -85,7 +85,7 @@ def _session_id_of(user: CurrentUser) -> uuid.UUID | None:
 
 
 @auth_router.post("/logout", status_code=status.HTTP_204_NO_CONTENT, summary="退出登录")
-def logout(user: CurrentUserDep, db: DbDep) -> Response:
+def logout(user: LogoutUserDep, db: DbDep) -> Response:
     # 契约里 logout 没有请求体：退哪一次会话完全由令牌里的 sid 决定
     IdentityService(db).logout(user_id=_user_id_of(user), session_id=_session_id_of(user))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
