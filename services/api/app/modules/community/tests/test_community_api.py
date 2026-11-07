@@ -236,14 +236,51 @@ def test_list_filters(client: TestClient, db_session: Session) -> None:
     assert ids(theme="历史") == [str(historical)]
     assert ids(q="自然") == [str(natural)]
     assert ids(duration="0-200") == [str(historical)]
-    # 排序：默认按发布时间倒序（扩展参数，契约里没有 sort）
+    # 排序：默认按收藏数倒序（同数看发布时间），扩展参数 latest/oldest 按发布时间
     assert ids() == [str(natural), str(historical)]
+    assert ids(sort="latest") == [str(natural), str(historical)]
     assert ids(sort="oldest") == [str(historical), str(natural)]
     # 没有 city/channel 字段：非长沙城市与 official 渠道都只能给空页
     assert ids(city="beijing") == []
     assert ids(city="长沙") == [str(natural), str(historical)]
     assert ids(channel="official") == []
     assert client.get(ROUTES_API, params={"duration": "bad"}).status_code == 400
+
+
+def test_list_default_sorts_by_favorites(client: TestClient, db_session: Session) -> None:
+    """默认按收藏数倒序；游标必须带着收藏数才能翻页，换排序模式要报坏游标。"""
+    popular = _published_route(
+        db_session,
+        title="被收藏的路线",
+        published_at=datetime.now(UTC) - timedelta(minutes=10),
+    )
+    fresh = _published_route(
+        db_session,
+        title="新发布但没人收藏",
+        published_at=datetime.now(UTC) - timedelta(minutes=1),
+    )
+    # 唯一约束是 (user_id, route_id)，两个不同用户各收藏一次。
+    db_session.add(Favorite(user_id=ADMIN_ID, route_id=popular))
+    db_session.add(Favorite(user_id=USER_ID, route_id=popular))
+    db_session.commit()
+
+    first = client.get(ROUTES_API, params={"limit": 1}).json()
+    assert [item["id"] for item in first["items"]] == [str(popular)]
+    assert first["items"][0]["favorite_count"] == 2
+    assert first["next_cursor"] is not None
+
+    second = client.get(ROUTES_API, params={"limit": 1, "cursor": first["next_cursor"]}).json()
+    assert [item["id"] for item in second["items"]] == [str(fresh)]
+    assert second["next_cursor"] is None
+
+    # 显式 latest 仍按发布时间倒序；热门把发布时间更早的路线排到前面。
+    latest = client.get(ROUTES_API, params={"sort": "latest"}).json()
+    assert [item["id"] for item in latest["items"]] == [str(fresh), str(popular)]
+
+    # 排序模式与游标不一致时直接 400，不悄悄给出错位结果。
+    mismatched = client.get(ROUTES_API, params={"sort": "latest", "cursor": first["next_cursor"]})
+    assert mismatched.status_code == 400
+    assert mismatched.json()["error"]["code"] == "INVALID_CURSOR"
 
 
 def test_route_detail_days_and_etag(client: TestClient, db_session: Session) -> None:

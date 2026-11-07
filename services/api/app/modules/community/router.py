@@ -67,9 +67,10 @@ def list_routes(
     duration: Annotated[str | None, Query(description="时长区间，例如 0-120")] = None,
     budget_max: Annotated[int | None, Query(ge=0, description="分，人均预算上限")] = None,
     channel: Annotated[Literal["official", "user"] | None, Query()] = None,
-    sort: Annotated[Literal["latest", "oldest"], Query(description="扩展参数：发布时间排序")] = (
-        "latest"
-    ),
+    sort: Annotated[
+        Literal["hot", "latest", "oldest"],
+        Query(description="默认 hot：收藏数倒序（同数看发布时间）；latest/oldest 按发布时间"),
+    ] = "hot",
     cursor: Annotated[str | None, Query(description="上一页返回的 next_cursor")] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
 ) -> RouteListOut:

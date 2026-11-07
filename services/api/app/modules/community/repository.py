@@ -23,9 +23,11 @@ from app.modules.routes.models import RouteDraft, RouteVersion
 
 # 注释型（置顶、时间倒序）游标的位置；置顶状态不是时间，core 的两字段游标装不下。
 CommentPosition = tuple[bool, datetime, uuid.UUID]
-# 路线列表游标的位置（发布时间 + route_id）与查询返回的一行（route_id + 发布时间）。
-RoutePosition = tuple[datetime, uuid.UUID]
-PublishedPosition = tuple[uuid.UUID, datetime]
+# 路线列表游标的位置（收藏数 + 发布时间 + route_id）与查询返回的一行。
+# 默认按收藏数排，游标必须带上收藏数才能继续翻页；latest/oldest 模式下
+# 收藏数只参与编码、不参与比较。
+RoutePosition = tuple[int, datetime, uuid.UUID]
+PublishedPosition = tuple[uuid.UUID, datetime, int]
 
 
 class CommunityRepository:
@@ -137,26 +139,51 @@ class CommunityRepository:
         *,
         after: RoutePosition | None,
         limit: int,
-        descending: bool,
+        sort: str,
     ) -> list[PublishedPosition]:
-        """每个「当前处于发布态」的 route 及发布版本的创建时间，按时间分页。
+        """每个「当前处于发布态」的 route 的位置，按 sort 分页。
+
+        hot：收藏数倒序（同数看发布时间倒序），这是产品要求的社区默认排序；
+        latest / oldest：按发布时间倒序 / 升序（扩展参数）。
 
         只看 publications.state = PUBLISHED 且内容取发布记录绑定的那个版本：
         下线只改状态、不搬 route_id，用 route_id 判断会把已下线路线继续放出来。
         """
+        favorites = (
+            select(Favorite.route_id.label("route_id"), func.count().label("fav_count"))
+            .group_by(Favorite.route_id)
+            .subquery()
+        )
         latest = (
             select(
                 Publication.route_id.label("route_id"),
                 RouteVersion.created_at.label("last_at"),
+                func.coalesce(favorites.c.fav_count, 0).label("fav_count"),
             )
             .join(RouteVersion, RouteVersion.id == Publication.version_id)
+            .outerjoin(favorites, favorites.c.route_id == Publication.route_id)
             .where(Publication.state == PublicationState.PUBLISHED)
             .subquery()
         )
-        stmt = select(latest.c.route_id, latest.c.last_at)
+        hot = sort not in ("latest", "oldest")
+        stmt = select(latest.c.route_id, latest.c.last_at, latest.c.fav_count)
         if after is not None:
-            at, route_id = after
-            if descending:
+            fav_count, at, route_id = after
+            if hot:
+                # 收藏数会变，游标按「编码那一刻的收藏数」做 keyset；
+                # 翻页期间收藏数上涨的行会落到后面（可能漏，不会重）。
+                stmt = stmt.where(
+                    or_(
+                        latest.c.fav_count < fav_count,
+                        and_(latest.c.fav_count == fav_count, latest.c.last_at < at),
+                        and_(
+                            latest.c.fav_count == fav_count,
+                            latest.c.last_at == at,
+                            latest.c.route_id < route_id,
+                        ),
+                    )
+                )
+            elif sort == "latest":
                 stmt = stmt.where(
                     or_(
                         latest.c.last_at < at,
@@ -170,12 +197,18 @@ class CommunityRepository:
                         and_(latest.c.last_at == at, latest.c.route_id > route_id),
                     )
                 )
-        if descending:
+        if hot:
+            stmt = stmt.order_by(
+                latest.c.fav_count.desc(),
+                latest.c.last_at.desc(),
+                latest.c.route_id.desc(),
+            )
+        elif sort == "latest":
             stmt = stmt.order_by(latest.c.last_at.desc(), latest.c.route_id.desc())
         else:
             stmt = stmt.order_by(latest.c.last_at.asc(), latest.c.route_id.asc())
         rows = self.db.execute(stmt.limit(limit))
-        return [(route_id, last_at) for route_id, last_at in rows]
+        return [(route_id, last_at, int(fav_count)) for route_id, last_at, fav_count in rows]
 
     def latest_versions(self, route_ids: list[uuid.UUID]) -> dict[uuid.UUID, RouteVersion]:
         """批量取每条路线「发布记录绑定的」版本行（内容取 version.snapshot）。"""
