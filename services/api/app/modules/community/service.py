@@ -173,6 +173,7 @@ class _RouteFilter:
 
     q: str | None = None
     theme: str | None = None
+    audience: str | None = None
     duration: tuple[int | None, int | None] | None = None
     budget_max: int | None = None
     channel: str | None = None
@@ -185,6 +186,11 @@ class _RouteFilter:
         if self.theme:
             tags = {str(tag).casefold() for tag in snapshot.get("theme_tags") or []}
             if self.theme.casefold() not in tags:
+                return False
+        if self.audience:
+            # 多选标签：命中任意一个就算适合这类人群，不是全包含。
+            audiences = {str(value) for value in snapshot.get("audience") or []}
+            if self.audience not in audiences:
                 return False
         if self.duration is not None:
             minutes = _optional_int(snapshot.get("duration_minutes"))
@@ -220,6 +226,7 @@ class CommunityService:
         *,
         q: str | None = None,
         theme: str | None = None,
+        audience: str | None = None,
         city: str | None = None,
         duration: str | None = None,
         budget_max: int | None = None,
@@ -235,6 +242,7 @@ class CommunityService:
         route_filter = _RouteFilter(
             q=q.strip() if q else None,
             theme=theme.strip() if theme else None,
+            audience=audience.strip() if audience else None,
             duration=_parse_duration(duration),
             budget_max=budget_max,
             channel=channel,
@@ -457,6 +465,7 @@ class CommunityService:
                     channel=str(snapshot.get("channel") or "user"),
                     author=AuthorOut(id=author_id, username=self._username_of(author_id)),
                     theme_tags=[str(tag) for tag in snapshot.get("theme_tags") or []],
+                    audience=[str(value) for value in snapshot.get("audience") or []],
                     duration_minutes=_optional_int(snapshot.get("duration_minutes")),
                     cost=_cost_of(snapshot),
                     comment_count=comment_counts.get(route_id, 0),

@@ -12,7 +12,7 @@
     "typecheck": "vue-tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "gen": "node ../packages/contracts/gen.mjs"
+    "gen": "node ../../packages/contracts/gen.mjs"
   },
   "dependencies": {
     "vue": "^3.5.12",

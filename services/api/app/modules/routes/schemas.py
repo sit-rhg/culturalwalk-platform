@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 # 节点详情里嵌的是公开 Place 形状。跨模块只借 DTO，不碰 catalog 的 ORM 模型：
 # 数据本身仍通过 CatalogService 读取（模块边界在 service 层）。
 from app.modules.catalog.schemas import PlaceOut
-from app.modules.routes.models import DraftState, TransportMode
+from app.modules.routes.models import Audience, DraftState, TransportMode
 
 
 class RouteDraftCreate(BaseModel):
@@ -27,6 +27,9 @@ class RouteDraftCreate(BaseModel):
     summary: str | None = Field(default=None, max_length=300)
     theme_tags: list[str] = Field(default_factory=list)
     duration_minutes: int | None = None
+    # 用枚举而不是 list[str]：拼错的取值（比如 "famliy"）要在入口 422，
+    # 否则会安静地存进去，发现页按 audience 筛选时永远命中不了。
+    audience: list[Audience] = Field(default_factory=list)
 
 
 class RouteDraftPatch(BaseModel):
@@ -42,14 +45,17 @@ class RouteDraftPatch(BaseModel):
     summary: str | None = Field(default=None, max_length=300)
     theme_tags: list[str] | None = None
     duration_minutes: int | None = None
+    audience: list[Audience] | None = None
 
     @model_validator(mode="after")
     def _reject_explicit_null(self) -> RouteDraftPatch:
-        # summary / duration_minutes 可以显式清空，title / theme_tags 不行：
-        # 一份没有标题或没有主题列表的草稿没有意义。
+        # summary / duration_minutes / audience 可以显式清空（空数组），
+        # title / theme_tags 不行：一份没有标题或没有主题列表的草稿没有意义。
         for name in ("title", "theme_tags"):
             if name in self.model_fields_set and getattr(self, name) is None:
                 raise ValueError(f"{name} 不能为 null")
+        if "audience" in self.model_fields_set and self.audience is None:
+            raise ValueError("audience 不能为 null，清空请传空数组")
         return self
 
 
@@ -62,6 +68,7 @@ class RouteDraftOut(BaseModel):
     route_id: uuid.UUID | None = None
     title: str
     summary: str | None = None
+    audience: list[Audience] = Field(default_factory=list)
     state: DraftState
     lock_version: int
     base_version_id: uuid.UUID | None = None

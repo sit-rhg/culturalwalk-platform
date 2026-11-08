@@ -26,6 +26,7 @@ from app.modules.community.schemas import (
     RouteVersionListOut,
 )
 from app.modules.community.service import CommunityService
+from app.modules.routes.schemas import Audience
 
 _routes_router = APIRouter(prefix="/routes", tags=["community"])
 _comments_router = APIRouter(prefix="/comments", tags=["community"])
@@ -63,6 +64,9 @@ def list_routes(
     db: DbDep,
     q: Annotated[str | None, Query(description="标题/摘要关键字")] = None,
     theme: Annotated[str | None, Query(description="文化主题标签")] = None,
+    audience: Annotated[
+        Audience | None, Query(description="适合人群，命中路线 audience 里包含该值即可")
+    ] = None,
     city: Annotated[str | None, Query(description="扩展参数：当前只收录长沙")] = None,
     duration: Annotated[str | None, Query(description="时长区间，例如 0-120")] = None,
     budget_max: Annotated[int | None, Query(ge=0, description="分，人均预算上限")] = None,
@@ -77,6 +81,7 @@ def list_routes(
     items, next_cursor = CommunityService(db).list_routes(
         q=q,
         theme=theme,
+        audience=audience.value if audience else None,
         city=city,
         duration=duration,
         budget_max=budget_max,

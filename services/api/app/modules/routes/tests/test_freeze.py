@@ -100,6 +100,7 @@ def test_snapshot_lists_nodes_in_position_order(db_session: Session) -> None:
         "title",
         "summary",
         "theme_tags",
+        "audience",
         "duration_minutes",
         "nodes",
     }

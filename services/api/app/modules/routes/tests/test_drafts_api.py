@@ -88,12 +88,14 @@ def test_create_returns_contract_shape(client: TestClient, user_headers: dict) -
         "route_id",
         "title",
         "summary",
+        "audience",
         "state",
         "lock_version",
         "base_version_id",
         "updated_at",
     }
     assert body["route_id"] is None
+    assert body["audience"] == []
     assert body["state"] == "EDITING"
     assert body["lock_version"] == 1
     assert body["title"] == "岳麓山到橘子洲半日"
@@ -350,3 +352,53 @@ def test_channel_server_default_matches_migration() -> None:
     default = RouteDraft.__table__.c.channel.server_default
     assert default is not None
     assert str(default.arg) == "user"
+
+
+# ===== 适合人群（DS-02） =====
+def test_create_and_patch_echo_audience(client: TestClient, user_headers: dict) -> None:
+    draft = _create(client, user_headers, audience=["family", "student"])
+    assert draft["audience"] == ["family", "student"]
+
+    response = _patch(
+        client,
+        user_headers,
+        draft["id"],
+        if_match=draft["lock_version"],
+        audience=["senior"],
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["audience"] == ["senior"]
+
+
+def test_create_with_unknown_audience_is_422(client: TestClient, user_headers: dict) -> None:
+    """拼错的取值必须在入口被挡下，否则会安静落库、发现页永远筛不到。"""
+    response = client.post(
+        API,
+        json=_payload(audience=["famliy"]),
+        headers={**user_headers, "Idempotency-Key": _key()},
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_FAILED"
+
+
+def test_snapshot_carries_audience_and_feeds_content_hash(
+    client: TestClient, user_headers: dict, db_session
+) -> None:
+    """改受众必须产生新版本：它影响发现页筛选，也就影响「这条路线是什么」。"""
+    from app.modules.routes.service import RoutesService
+
+    draft = _create(client, user_headers, audience=["family"])
+    service = RoutesService(db_session)
+
+    first = service.freeze_version(draft_id=uuid.UUID(draft["id"]))
+    assert first.snapshot["audience"] == ["family"]
+
+    claimed = client.patch(
+        f"{API}/{draft['id']}",
+        json={"audience": ["solo"]},
+        headers={**user_headers, "If-Match": "1", "Idempotency-Key": _key()},
+    )
+    assert claimed.status_code == 200, claimed.text
+    second = service.freeze_version(draft_id=uuid.UUID(draft["id"]))
+    assert second.snapshot["audience"] == ["solo"]
+    assert second.content_hash != first.content_hash

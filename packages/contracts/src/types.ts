@@ -1098,6 +1098,8 @@ export interface paths {
                 query?: {
                     q?: string;
                     theme?: string;
+                    /** @description 适合人群，命中路线 audience 里包含该值即可 */
+                    audience?: components["schemas"]["Audience"];
                     /** @description 例如 0-120 / 120-240 */
                     duration?: string;
                     /** @description 分 */
@@ -1961,17 +1963,25 @@ export interface components {
             price_max?: number | null;
             media_asset_ids?: string[];
         };
+        /**
+         * @description 适合人群的取值。family=亲子 student=学生 couple=情侣 senior=长者 solo=独自 group=团体
+         * @enum {string}
+         */
+        Audience: "family" | "student" | "couple" | "senior" | "solo" | "group";
         RouteDraftCreate: {
             title: string;
             summary?: string;
             theme_tags?: string[];
             duration_minutes?: number;
+            /** @description 适合人群（多选），发现页可作为筛选条件 */
+            audience?: components["schemas"]["Audience"][];
         };
         RouteDraftPatch: {
             title?: string;
             summary?: string;
             theme_tags?: string[];
             duration_minutes?: number;
+            audience?: components["schemas"]["Audience"][];
         };
         RouteDraft: {
             /** Format: uuid */
@@ -1980,6 +1990,7 @@ export interface components {
             route_id?: string;
             title: string;
             summary?: string | null;
+            audience?: components["schemas"]["Audience"][];
             /** @enum {string} */
             state: "EDITING" | "SUBMITTED_LOCKED" | "APPROVED_LOCKED" | "ARCHIVED";
             lock_version: number;
@@ -2022,6 +2033,8 @@ export interface components {
                 username?: string;
             };
             theme_tags?: string[];
+            /** @description 适合人群（多选） */
+            audience?: components["schemas"]["Audience"][];
             duration_minutes?: number | null;
             cost?: components["schemas"]["CostSummary"];
             comment_count?: number;

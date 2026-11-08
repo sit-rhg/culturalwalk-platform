@@ -13,7 +13,7 @@ describe('buildRouteQuery', () => {
 
   it('按契约拼 q/theme/duration/channel 并去掉首尾空格', () => {
     const query = buildRouteQuery(
-      { q: '  书店 ', theme: '亲子', duration: '120-240', channel: 'official' },
+      { q: '  书店 ', theme: '亲子', duration: '120-240', channel: 'official', audience: '' },
       null,
       6,
     )
@@ -21,6 +21,12 @@ describe('buildRouteQuery', () => {
     const params = new URLSearchParams(query)
     expect(params.get('q')).toBe('书店')
     expect(params.get('theme')).toBe('亲子')
+  })
+
+  it('适合人群单独拼一个 audience 参数', () => {
+    const query = buildRouteQuery({ ...EMPTY_FILTERS, audience: 'family' }, null, 6)
+    expect(new URLSearchParams(query).get('audience')).toBe('family')
+    expect(new URLSearchParams(buildRouteQuery(EMPTY_FILTERS, null, 6)).get('audience')).toBeNull()
   })
 
   it('加载更多时带上 cursor', () => {
@@ -36,6 +42,7 @@ describe('hasActiveFilter', () => {
   it('任一条件有值就算筛选', () => {
     expect(hasActiveFilter({ ...EMPTY_FILTERS, duration: '0-120' })).toBe(true)
     expect(hasActiveFilter({ ...EMPTY_FILTERS, channel: 'user' })).toBe(true)
+    expect(hasActiveFilter({ ...EMPTY_FILTERS, audience: 'senior' })).toBe(true)
   })
 })
 

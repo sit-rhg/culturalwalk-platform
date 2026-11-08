@@ -2,14 +2,23 @@
  * 浏览页的筛选逻辑。抽成纯函数，方便单测，也让页面只负责状态与渲染。
  */
 
+import { AUDIENCE_OPTIONS as AUDIENCE_CHOICES } from '@/shared/audience'
+
 export type BrowseFilters = {
   q: string
   theme: string
+  audience: string
   duration: string
   channel: string
 }
 
-export const EMPTY_FILTERS: BrowseFilters = { q: '', theme: '', duration: '', channel: '' }
+export const EMPTY_FILTERS: BrowseFilters = {
+  q: '',
+  theme: '',
+  audience: '',
+  duration: '',
+  channel: '',
+}
 
 /** 时长区间取值与接口契约一致：0-120 / 120-240 / 240- */
 export const DURATION_OPTIONS = [
@@ -25,10 +34,22 @@ export const CHANNEL_OPTIONS = [
   { value: 'user', label: '用户投稿' },
 ] as const
 
+/** 与契约 Audience 枚举一一对应；value 是落库值，label 才是给用户看的。 */
+export const AUDIENCE_OPTIONS = [
+  { value: '', label: '全部人群' },
+  ...AUDIENCE_CHOICES.map((option) => ({ value: option.value as string, label: option.label })),
+]
+
 export const THEME_LIMIT = 10
 
 export function hasActiveFilter(filters: BrowseFilters): boolean {
-  return Boolean(filters.q.trim() || filters.theme || filters.duration || filters.channel)
+  return Boolean(
+    filters.q.trim() ||
+      filters.theme ||
+      filters.audience ||
+      filters.duration ||
+      filters.channel,
+  )
 }
 
 /** 空值不下发，避免 ?theme=&duration= 这类噪声；limit 总是带。 */
@@ -41,6 +62,7 @@ export function buildRouteQuery(
   const q = filters.q.trim()
   if (q) params.set('q', q)
   if (filters.theme) params.set('theme', filters.theme)
+  if (filters.audience) params.set('audience', filters.audience)
   if (filters.duration) params.set('duration', filters.duration)
   if (filters.channel) params.set('channel', filters.channel)
   if (cursor) params.set('cursor', cursor)

@@ -132,6 +132,7 @@ class RoutesService:
             summary=payload.summary,
             theme_tags=_clean_tags(payload.theme_tags),
             duration_minutes=payload.duration_minutes,
+            audience=[member.value for member in payload.audience],
             # 显式给 EDITING / 1：列默认值要等 INSERT 才生效，构造后立刻读是 None。
             state=DraftState.EDITING,
             lock_version=1,
@@ -394,6 +395,8 @@ class RoutesService:
             values["theme_tags"] = _clean_tags(payload.theme_tags or [])
         if "duration_minutes" in payload.model_fields_set:
             values["duration_minutes"] = payload.duration_minutes
+        if "audience" in payload.model_fields_set:
+            values["audience"] = [member.value for member in (payload.audience or [])]
         return values
 
     # ===== 版本冻结 =====
@@ -442,6 +445,9 @@ class RoutesService:
             "title": draft.title,
             "summary": draft.summary,
             "theme_tags": list(draft.theme_tags or []),
+            # 适合人群进快照：它影响发现页筛选，也就影响「这条路线是什么」，
+            # 不进 hash 的话审核通过后再改受众不会产生新版本。
+            "audience": list(draft.audience or []),
             "duration_minutes": draft.duration_minutes,
             "nodes": [
                 {
