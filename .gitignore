@@ -85,3 +85,7 @@ apps/web/blob-report/
 services/api/*.err
 services/api/*.out
 services/api/*.db
+
+# ---- 打包产物（scripts/package_windows.py 的中间目录与 zip）----
+/build/
+/release/
