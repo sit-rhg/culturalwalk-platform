@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from decimal import Decimal
 from typing import Any
 
@@ -99,6 +99,19 @@ class CatalogService:
         if place is None or place.status != PlaceStatus.VERIFIED:
             raise NotFound("地点不存在", code="PLACE_NOT_FOUND")
         return _detail_out(place)
+
+    def place_names(self, place_ids: Iterable[str]) -> dict[str, str]:
+        """把快照里的 place_id 批量翻成地名，审核页的版本对照才看得出换了哪个点。
+
+        非法 id 和查不到的 id 直接略过，前端会退回显示截断的 id。
+        """
+        parsed: list[uuid.UUID] = []
+        for raw in place_ids:
+            try:
+                parsed.append(uuid.UUID(str(raw)))
+            except ValueError:
+                continue
+        return self.repo.place_names(parsed)
 
     # ---------- 幂等 ----------
 

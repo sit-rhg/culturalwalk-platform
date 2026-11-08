@@ -19,7 +19,6 @@ import {
   type DecisionAction,
   applyNotificationRead,
   decisionPayload,
-  toComments,
   toDrafts,
   toPage,
   toReviewTasks,
@@ -46,8 +45,21 @@ export async function setRouteFavorite(routeId: string, favorited: boolean): Pro
   return favorited
 }
 
+/** 评论一页 20 条（契约默认），下一页靠 next_cursor；sortComments 只保证置顶在前。 */
+export async function fetchRouteCommentPage(
+  routeId: string,
+  params: { cursor?: string; limit?: number } = {},
+): Promise<Page<Comment>> {
+  const search = new URLSearchParams()
+  if (params.cursor) search.set('cursor', params.cursor)
+  if (params.limit) search.set('limit', String(params.limit))
+  const query = search.toString()
+  const suffix = query ? `?${query}` : ''
+  return toPage(await api.get<RawPage<Comment>>(`/routes/${seg(routeId)}/comments${suffix}`))
+}
+
 export async function fetchRouteComments(routeId: string): Promise<Comment[]> {
-  return toComments(await api.get<RawPage<Comment>>(`/routes/${seg(routeId)}/comments`))
+  return (await fetchRouteCommentPage(routeId)).items
 }
 
 export async function createRouteComment(routeId: string, body: string): Promise<Comment> {

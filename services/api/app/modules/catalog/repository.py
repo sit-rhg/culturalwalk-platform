@@ -73,6 +73,13 @@ class CatalogRepository:
     def get_place(self, place_id: uuid.UUID) -> Place | None:
         return self.db.get(Place, place_id)
 
+    def place_names(self, place_ids: list[uuid.UUID]) -> dict[str, str]:
+        """批量取地名。不过滤 status：审核要对比的草稿点位可能还没 VERIFIED。"""
+        if not place_ids:
+            return {}
+        stmt = select(Place.id, Place.name).where(Place.id.in_(place_ids))
+        return {str(row.id): row.name for row in self.db.execute(stmt)}
+
     def get_fact(self, fact_id: uuid.UUID) -> PlaceFact | None:
         return self.db.get(PlaceFact, fact_id)
 

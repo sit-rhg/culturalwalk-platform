@@ -19,6 +19,8 @@ export interface DiffResult {
   /** 截断前的总行数，用于提示 */
   totalOps: number
   truncated: boolean
+  /** 输入超过 MAX_INPUT_LINES 时为 true：只对比了前 400 行，尾部改动可能看不见 */
+  inputTruncated: boolean
 }
 
 export interface DiffRow {
@@ -32,7 +34,7 @@ export interface DiffRow {
 export const MAX_DIFF_LINES = 200
 
 /** LCS 是 O(n×m)，超长文本先砍掉，别把主线程算死 */
-const MAX_INPUT_LINES = 400
+export const MAX_INPUT_LINES = 400
 
 export function splitLines(text: string | null | undefined): string[] {
   if (!text) return []
@@ -47,8 +49,12 @@ export function diffLines(
   after: string | null | undefined,
   limit: number = MAX_DIFF_LINES,
 ): DiffResult {
-  const left = splitLines(before).slice(0, MAX_INPUT_LINES)
-  const right = splitLines(after).slice(0, MAX_INPUT_LINES)
+  const leftLines = splitLines(before)
+  const rightLines = splitLines(after)
+  const inputTruncated =
+    leftLines.length > MAX_INPUT_LINES || rightLines.length > MAX_INPUT_LINES
+  const left = leftLines.slice(0, MAX_INPUT_LINES)
+  const right = rightLines.slice(0, MAX_INPUT_LINES)
   const table = buildLcsTable(left, right)
 
   const ops: DiffOp[] = []
@@ -76,7 +82,14 @@ export function diffLines(
     j += 1
   }
 
-  return { ops: ops.slice(0, limit), totalOps: ops.length, truncated: ops.length > limit }
+  // 「差异共 N 行」只该数增删，把未改的 same 也算进去会吓人一跳。
+  const changed = ops.filter((op) => op.kind !== 'same').length
+  return {
+    ops: ops.slice(0, limit),
+    totalOps: changed,
+    truncated: ops.length > limit,
+    inputTruncated,
+  }
 }
 
 function buildLcsTable(left: string[], right: string[]): number[][] {
@@ -119,12 +132,36 @@ export function transportLabel(value: unknown): string {
   return labels[value] ?? value
 }
 
+/** 价格在快照里是分，审核员要看到元；缺一端时不能把 0 当成"免费" */
+function priceText(min: unknown, max: unknown): string {
+  const low = typeof min === 'number' ? min : null
+  const high = typeof max === 'number' ? max : null
+  const yuan = (cents: number): string => {
+    const value = cents / 100
+    return Number.isInteger(value) ? String(value) : value.toFixed(2)
+  }
+  if (low !== null && high !== null) return `门票 ¥${yuan(low)}-¥${yuan(high)}`
+  if (low !== null) return `门票 ¥${yuan(low)} 起`
+  if (high !== null) return `门票 ≤¥${yuan(high)}`
+  return '门票待核实'
+}
+
+function mediaText(value: unknown): string {
+  const items = Array.isArray(value) ? value : []
+  return items.length > 0 ? `配图 ${items.length} 张` : '无配图'
+}
+
 /**
  * 把投稿快照翻成可读文本，给「版本对照」做逐行 diff 用。
  * 快照里没有 content 字段（只有 title/summary/theme_tags/nodes），
  * 直接读 content 会让对照区永远空白 —— 这是 P-20 记的那个坑。
+ * 节点必须把 place_id / 价格 / 配图也渲染出来，否则换点、改价、换图
+ * 三种改动在文本上完全一样，审核员会看到"没有差异"。
  */
-export function snapshotToText(snapshot: Record<string, unknown> | null | undefined): string {
+export function snapshotToText(
+  snapshot: Record<string, unknown> | null | undefined,
+  placeNames: Record<string, string> | null | undefined = null,
+): string {
   if (!snapshot) return ''
   const lines: string[] = []
   const title = snapshotText(snapshot, 'title')
@@ -144,8 +181,16 @@ export function snapshotToText(snapshot: Record<string, unknown> | null | undefi
     nodes.forEach((raw, index) => {
       const node = (raw ?? {}) as Record<string, unknown>
       const parts: string[] = []
+      const placeId = typeof node.place_id === 'string' ? node.place_id : ''
+      if (placeId) {
+        const name = placeNames?.[placeId]
+        // 地名解析不到时退回短 id，至少让"换了个点"可见
+        parts.push(`地点 ${name ?? placeId.slice(0, 8)}`)
+      }
       if (typeof node.stay_minutes === 'number') parts.push(`停留 ${node.stay_minutes} 分钟`)
       parts.push(transportLabel(node.transport))
+      parts.push(priceText(node.price_min, node.price_max))
+      parts.push(mediaText(node.media_asset_ids))
       const note = typeof node.note === 'string' ? node.note : ''
       const head = `${index + 1}. ${parts.join(' · ')}`
       lines.push(note ? `${head}｜${note}` : head)

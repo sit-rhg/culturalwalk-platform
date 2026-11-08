@@ -99,6 +99,23 @@ def _user_id_of(user: CurrentUser) -> uuid.UUID:
         raise Unauthorized("登录已失效，请重新登录") from exc
 
 
+def _snapshot_place_ids(*snapshots: dict[str, Any] | None) -> list[str]:
+    """从快照里收集节点引用的点位 id，给审核页做批量地名解析。"""
+    ids: list[str] = []
+    seen: set[str] = set()
+    for snapshot in snapshots:
+        if not snapshot:
+            continue
+        for node in snapshot.get("nodes") or []:
+            if not isinstance(node, dict):
+                continue
+            place_id = node.get("place_id")
+            if isinstance(place_id, str) and place_id and place_id not in seen:
+                seen.add(place_id)
+                ids.append(place_id)
+    return ids
+
+
 class ModerationService:
     """依赖注入的官方入口；外部模块只能通过它访问本模块能力。"""
 
@@ -518,7 +535,7 @@ class ModerationService:
     # ===== 投稿详情 =====
     def submission_detail(
         self, *, submission_id: uuid.UUID, viewer: CurrentUser
-    ) -> tuple[Submission, dict[str, Any], dict[str, Any] | None, str | None]:
+    ) -> tuple[Submission, dict[str, Any], dict[str, Any] | None, str | None, dict[str, str]]:
         submission = self.repo.get_submission(submission_id)
         if submission is None:
             raise NotFound("投稿不存在", code="SUBMISSION_NOT_FOUND")
@@ -544,7 +561,14 @@ class ModerationService:
                 previous_snapshot = dict(previous.snapshot)
 
         author = IdentityService(self.db).get_user(submission.submitted_by)
-        return submission, snapshot, previous_snapshot, author.username if author else None
+        place_names = self.routes.place_names(_snapshot_place_ids(snapshot, previous_snapshot))
+        return (
+            submission,
+            snapshot,
+            previous_snapshot,
+            author.username if author else None,
+            place_names,
+        )
 
     # ===== 发布 =====
     def publish(

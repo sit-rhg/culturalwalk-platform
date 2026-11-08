@@ -203,12 +203,13 @@ def get_submission(
     viewer: CurrentUserDep,
     db: DbDep,
 ) -> SubmissionDetailOut:
-    submission, snapshot, previous_snapshot, author_username = ModerationService(
+    submission, snapshot, previous_snapshot, author_username, place_names = ModerationService(
         db
     ).submission_detail(submission_id=submission_id, viewer=viewer)
     detail = SubmissionDetailOut.model_validate(submission)
     detail.snapshot = snapshot
     detail.previous_snapshot = previous_snapshot
+    detail.place_names = place_names
     if author_username is not None:
         detail.author = AuthorOut(id=submission.submitted_by, username=author_username)
     return detail

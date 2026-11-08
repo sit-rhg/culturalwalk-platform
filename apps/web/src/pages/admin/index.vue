@@ -65,8 +65,12 @@ const doneTasks = computed(() => tasks.value.filter((task) => !isPendingTask(tas
 
 const submissionTitle = computed(() => snapshotText(submission.value?.snapshot, 'title') || '未命名路线')
 const authorName = computed(() => submission.value?.author?.username ?? '未知作者')
-const previousContent = computed(() => snapshotToText(submission.value?.previous_snapshot))
-const currentContent = computed(() => snapshotToText(submission.value?.snapshot))
+const previousContent = computed(() =>
+  snapshotToText(submission.value?.previous_snapshot, submission.value?.place_names),
+)
+const currentContent = computed(() =>
+  snapshotToText(submission.value?.snapshot, submission.value?.place_names),
+)
 const noteError = computed(() => decisionBlockedReason(modalAction.value, note.value))
 
 function errorMessage(error: unknown): string {

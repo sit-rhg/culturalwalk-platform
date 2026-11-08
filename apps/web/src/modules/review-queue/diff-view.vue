@@ -37,6 +37,9 @@ function cellClass(kind: DiffKind, side: 'left' | 'right'): string {
       </div>
     </div>
     <p v-if="!rows.length" class="muted">没有可对照的文本内容</p>
+    <p v-if="result.inputTruncated" class="muted warn">
+      内容超过 400 行，只对比了前 400 行；后段改动可能不在下面
+    </p>
     <p v-if="result.truncated" class="muted">
       差异共 {{ result.totalOps }} 行，只显示前 {{ MAX_DIFF_LINES }} 行
     </p>

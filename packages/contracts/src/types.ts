@@ -2109,6 +2109,10 @@ export interface components {
                 id?: string;
                 username?: string;
             };
+            /** @description place_id 到地名的映射；快照节点只存 id，审核页靠它显示"换了哪个地点" */
+            place_names?: {
+                [key: string]: string;
+            };
         };
         ReviewTask: {
             /** Format: uuid */
