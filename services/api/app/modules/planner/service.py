@@ -11,6 +11,7 @@ import hashlib
 import json
 import logging
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 from typing import Final
@@ -191,6 +192,17 @@ def _as_time(value: object) -> time | None:
         return time.fromisoformat(str(value))
     except ValueError:
         return None
+
+
+def _day_summary(day_index: int, preferences: dict[str, object]) -> str:
+    """日期摘要：含住宿的行程在摘要上直说，前端列表里一眼能看出来。
+
+    只在摘要上标而不新建一张「住宿」条目：这个版本没有住宿点位数据，
+    凭空造一条会把「待核实」的战线拉到酒店上，反而更难解释。
+    """
+    if preferences.get("include_lodging") is True:
+        return f"第 {day_index} 天（含住宿）"
+    return f"第 {day_index} 天"
 
 
 def _verified_by_place(
@@ -515,6 +527,7 @@ class PlannerService:
         *,
         place_source: PlaceSource | None = None,
         places: PlaceFactsSource | None = None,
+        on_step: Callable[[], None] | None = None,
     ) -> RunResult:
         """跑完整条流水线，把每一步落成 agent_steps，再给行程和生成记录收尾。
 
@@ -523,11 +536,17 @@ class PlannerService:
 
         成功时顺手把排好的日程落库并标价（PL-06）：目录结构要跟着生成结果走，
         所以放在这里而不是入队时——入队时还没有日程。
+
+        `on_step` 是给 worker 的续租钩子（D5）：每跑完一个岗位调一次，
+        避免四个岗位串起来超过 120 秒租期后被别人当死任务重领。
         """
         # 没注入检索源就用地点库兜底：PL-03 当时的空实现会让日程为空，
         # 而「排不出一条行程」对用户来说等于功能没做。
         source = place_source or catalog_candidate_source(self.db)
-        result = Orchestrator(place_source=source).run(_context_from_itinerary(itinerary))
+        result = Orchestrator(
+            place_source=source,
+            on_step=(lambda _record: on_step()) if on_step is not None else None,
+        ).run(_context_from_itinerary(itinerary))
         for index, step in enumerate(result.steps):
             self.db.add(
                 AgentStep(
@@ -602,7 +621,7 @@ class PlannerService:
                 day = ItineraryDay(
                     itinerary_id=itinerary.id,
                     day_index=day_index,
-                    summary=f"第 {day_index} 天",
+                    summary=_day_summary(day_index, context.preferences),
                 )
                 self.db.add(day)
                 days[day_index] = day
@@ -629,7 +648,10 @@ class PlannerService:
     def cost_summary(self, itinerary: Itinerary) -> CostSummaryOut:
         """整份行程的费用汇总（契约 CostSummary）。"""
         days = self.repo.days_for_itinerary(itinerary.id)
-        total = summarize(item for day in days for item in day.items)
+        total = summarize(
+            (item for day in days for item in day.items),
+            people=itinerary.people,
+        )
         return CostSummaryOut(
             min_total=total.min_total,
             max_total=total.max_total,
@@ -671,7 +693,10 @@ class PlannerService:
             days_plan.append(PlanDayOut(day_index=day.day_index, items=items))
 
         base = PlanOut.from_itinerary(itinerary, run_id=run.id if run is not None else None)
-        total = summarize(item for day in days for item in day.items)
+        total = summarize(
+            (item for day in days for item in day.items),
+            people=itinerary.people,
+        )
         return PlanDetailOut(
             **base.model_dump(),
             steps=[PlanStepOut.model_validate(step) for step in steps],
@@ -791,6 +816,18 @@ class PlannerService:
             worker=worker,
         )
 
+    def renew_lease(self, job: PlanJob, *, now: datetime | None = None) -> None:
+        """给正在跑的任务把租约往后推一轮（D5）。
+
+        为什么单独提交：续租的意义是"让别人看见我还活着"，只在当前事务里改值
+        别的 worker 读不到。代价是这一轮已经落库的东西提前可见——对生成任务无所谓，
+        半截结果本来就会被下一次重领清掉。
+        """
+        moment = now or datetime.now(UTC)
+        job.claimed_at = moment
+        job.lease_until = moment + timedelta(seconds=JOB_LEASE_SECONDS)
+        self.db.commit()
+
     def execute_job(
         self,
         job: PlanJob,
@@ -817,7 +854,13 @@ class PlannerService:
         self.db.flush()
         self._rearm(itinerary, run)
 
-        result = self.run_agents(itinerary, run, place_source=place_source, places=places)
+        result = self.run_agents(
+            itinerary,
+            run,
+            place_source=place_source,
+            places=places,
+            on_step=lambda: self.renew_lease(job),
+        )
         if result.ok:
             job.state = JobState.DONE
             job.last_error = None

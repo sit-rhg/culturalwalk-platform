@@ -484,7 +484,8 @@ const table: Array<[string, string, Handler]> = [
     state.drafts.unshift(draft)
     state.draftNodes[draft.id] = firstDay.map((item, index) => ({
       position: index + 1,
-      place: item.place,
+      // 规划结果里的点位查不到时是 null；草稿节点用「没有 place」表达同一件事
+      place: item.place ?? undefined,
       stay_minutes: item.stay_minutes ?? 60,
       transport: item.transport ?? 'walk',
       note: null,

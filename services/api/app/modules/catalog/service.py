@@ -239,6 +239,46 @@ class CatalogService:
         self._finish_idempotent(record, place.id)
         return place
 
+    def update_status(
+        self,
+        place_id: uuid.UUID,
+        *,
+        status: str,
+        actor: CurrentUser,
+        request_id: str | None = None,
+    ) -> PlaceDetailOut:
+        """改收录状态：草稿补完资料后置 verified（发布），发布错了撤回成 draft（D9）。
+
+        以前没有任何端点能做这一步：新建的地点永远停在 draft，公开列表永远看不到，
+        只能进数据库手改——那等于把审核动作变成手工运维。
+
+        重复点「发布」不报错（幂等）：前端按钮点两下不该给用户一个 409。
+        状态没变时不写审计，避免日志里出现一串「发布→发布」的噪音。
+        """
+        place = self.repo.get_place(place_id)
+        if place is None:
+            raise NotFound("地点不存在", code="PLACE_NOT_FOUND")
+
+        target = PlaceStatus(status)
+        if place.status == target:
+            return _detail_out(place)
+
+        before = str(place.status)
+        place.status = target
+        audit.write(
+            self.db,
+            action="place.status",
+            object_type="place",
+            object_id=str(place.id),
+            actor_id=actor.id,
+            actor_username=actor.username,
+            before_hash=audit.AuditService.digest({"status": before}),
+            after_hash=audit.AuditService.digest({"status": str(target)}),
+            request_id=request_id,
+        )
+        self.db.flush()
+        return _detail_out(place)
+
     def add_fact(
         self,
         place_id: uuid.UUID,

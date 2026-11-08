@@ -405,7 +405,40 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * 改收录状态：草稿 ↔ 已核实（编辑）
+         * @description 草稿点位补完资料后发布成 verified，公开列表与行程才能读到；
+         *     误发布时撤回成 draft。只改 `status` 一个字段。
+         *     状态没变时按原样返回（幂等），不重复写审计。
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    place_id: components["parameters"]["PlaceId"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["PlaceStatusUpdateInput"];
+                };
+            };
+            responses: {
+                /** @description 修改后的地点 */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PlaceDetail"];
+                    };
+                };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+            };
+        };
         trace?: never;
     };
     "/places/{place_id}/facts": {
@@ -1537,6 +1570,7 @@ export interface paths {
                     };
                     content?: never;
                 };
+                404: components["responses"]["NotFound"];
             };
         };
         options?: never;
@@ -1942,6 +1976,13 @@ export interface components {
              */
             crs: "OGC:CRS84" | "WGS84" | "GCJ-02";
         };
+        PlaceStatusUpdateInput: {
+            /**
+             * @description 目标状态。draft 只在编辑端可见；verified 才会被公开列表与行程读到。
+             * @enum {string}
+             */
+            status: "draft" | "verified";
+        };
         PlaceFact: {
             /** Format: uuid */
             id: string;
@@ -2218,7 +2259,8 @@ export interface components {
                 day_index?: number;
                 items?: {
                     order?: number;
-                    place?: components["schemas"]["Place"];
+                    /** @description 点位资料查不到时为 null，前端显示「点位待补」 */
+                    place?: components["schemas"]["Place"] | null;
                     stay_minutes?: number;
                     transport?: string;
                     price_min?: number | null;

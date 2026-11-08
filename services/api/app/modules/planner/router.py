@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.deps import CurrentUser, CurrentUserDep
-from app.core.errors import Unauthorized
+from app.core.errors import Unauthorized, ValidationFailed
 from app.core.pagination import DEFAULT_LIMIT, MAX_LIMIT
 from app.modules.planner.schemas import (
     PlanDetailOut,
@@ -44,6 +44,23 @@ def _request_id(request: Request) -> str | None:
     return getattr(request.state, "request_id", None)
 
 
+def _idempotency_key(raw: str) -> str:
+    """按契约把 Idempotency-Key 收成 UUID 字符串。
+
+    头参数只限了长度，但契约（docs/api/openapi.yaml 的 IdempotencyKey）写的是
+    format: uuid。放开格式会让 `order-1` 这种手搓 key 混进来：两个客户端撞同一把
+    key 时，第二个请求会拿到第一个的行程，看起来像"提交成功了但内容不对"。
+    转成标准小写形式再入库，避免 `ABC` 与 `abc` 被当成两把 key。
+    """
+    try:
+        return str(uuid.UUID(raw.strip()))
+    except ValueError as exc:
+        raise ValidationFailed(
+            "Idempotency-Key 必须是 UUID",
+            details=[{"field": "Idempotency-Key", "reason": "需要一个 uuid"}],
+        ) from exc
+
+
 @router.post(
     "",
     response_model=PlanOut,
@@ -65,7 +82,7 @@ def create_plan(
     created = PlannerService(db).create_plan(
         user_id=_user_uuid(user),
         payload=payload,
-        idempotency_key=idempotency_key,
+        idempotency_key=_idempotency_key(idempotency_key),
     )
     return PlanOut.from_itinerary(created.itinerary, run_id=created.run.id)
 
@@ -124,7 +141,7 @@ def plan_to_draft(
     draft_id = PlannerService(db).to_draft(
         user_id=_user_uuid(user),
         plan_id=plan_id,
-        idempotency_key=idempotency_key,
+        idempotency_key=_idempotency_key(idempotency_key),
     )
     return ToDraftOut(draft_id=draft_id)
 

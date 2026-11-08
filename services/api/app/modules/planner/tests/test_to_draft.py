@@ -398,7 +398,7 @@ def test_api_creates_draft(
     with _client(session_factory) as client:
         response = client.post(
             f"{API}/{itinerary.id}/to-draft",
-            headers=_headers(itinerary.user_id, key="idem-1234"),
+            headers=_headers(itinerary.user_id, key=str(uuid.uuid4())),
         )
 
     assert response.status_code == 201, response.text
@@ -423,7 +423,7 @@ def test_api_requires_idempotency_key(session_factory: sessionmaker[Session]) ->
 def test_api_requires_login(session_factory: sessionmaker[Session]) -> None:
     with _client(session_factory) as client:
         response = client.post(
-            f"{API}/{uuid.uuid4()}/to-draft", headers={"Idempotency-Key": "idem-1234"}
+            f"{API}/{uuid.uuid4()}/to-draft", headers={"Idempotency-Key": str(uuid.uuid4())}
         )
 
     assert response.status_code == 401
@@ -433,7 +433,7 @@ def test_api_hides_missing_plan(session_factory: sessionmaker[Session]) -> None:
     with _client(session_factory) as client:
         response = client.post(
             f"{API}/{uuid.uuid4()}/to-draft",
-            headers=_headers(uuid.uuid4(), key="idem-1234"),
+            headers=_headers(uuid.uuid4(), key=str(uuid.uuid4())),
         )
 
     assert response.status_code == 404
@@ -452,7 +452,7 @@ def test_api_forbids_other_users_plan(
     with _client(session_factory) as client:
         response = client.post(
             f"{API}/{itinerary.id}/to-draft",
-            headers=_headers(uuid.uuid4(), key="idem-1234"),
+            headers=_headers(uuid.uuid4(), key=str(uuid.uuid4())),
         )
 
     assert response.status_code == 403
@@ -471,7 +471,7 @@ def test_api_conflicts_when_still_generating(
     with _client(session_factory) as client:
         response = client.post(
             f"{API}/{itinerary.id}/to-draft",
-            headers=_headers(itinerary.user_id, key="idem-1234"),
+            headers=_headers(itinerary.user_id, key=str(uuid.uuid4())),
         )
 
     assert response.status_code == 409

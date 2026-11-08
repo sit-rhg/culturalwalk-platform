@@ -236,6 +236,12 @@ class AgentStep(Base):
     """一个 Agent 在某次生成里的执行记录。"""
 
     __tablename__ = "agent_steps"
+    __table_args__ = (
+        # 一次生成里，同一个序号只能有一行（D5）。
+        # 没有这条约束时，重试与正常收尾并发写会留下两条「第 0 步」，
+        # 前端按顺序展示就会看到「调研」出现两次，也看不出哪条更新。
+        Index("uq_agent_steps_run_step", "run_id", "step_index", unique=True),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     run_id: Mapped[uuid.UUID] = mapped_column(
