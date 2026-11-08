@@ -26,6 +26,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 API_ROOT = REPO_ROOT / "services" / "api"
 WEB_ROOT = REPO_ROOT / "apps" / "web"
+
+# 子进程输出里有 ✓ 这类字符，而 CI 的 Windows 控制台是 cp1252：
+# print 时按本地编码编码会抛 UnicodeEncodeError。统一按 UTF-8 输出。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 SKIP_DIRS = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
 SKIP_SUFFIXES = {".pyc", ".pyo"}
 
