@@ -8,6 +8,8 @@ import uuid
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
 from app.core.deps import register_session_guard
@@ -109,7 +111,37 @@ def create_app() -> FastAPI:
         return {"status": "ok", "version": "0.1.0"}
 
     app.include_router(api)
+    _mount_web(app)
     return app
+
+
+def _mount_web(app: FastAPI) -> None:
+    """有构建产物就由后端托管前端。
+
+    打包版只起一个进程：模块加载时的 vite dev server 不能被带走，前端 dist 直接
+    由 FastAPI 发。API 路由先注册，路径匹配优先，只有没命中的 GET 才落到 SPA 兜底，
+    这样 /routes/<id> 这类前端路由刷新不会 404。没配 WEB_DIST 或目录不存在时
+    什么都不做，本地开发仍然照旧走 vite。
+    """
+    dist = settings.web_dist
+    if dist is None:
+        return
+    index = dist / "index.html"
+    if not index.is_file():
+        return
+    assets = dist / "assets"
+    if assets.is_dir():
+        app.mount("/assets", StaticFiles(directory=assets), name="web-assets")
+
+    resolved_root = dist.resolve()
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def spa_fallback(full_path: str) -> FileResponse:
+        candidate = (dist / full_path).resolve()
+        # resolve() 之后再比对父目录，挡住 ../ 穿越读到包外文件。
+        if candidate.is_file() and resolved_root in candidate.parents:
+            return FileResponse(candidate)
+        return FileResponse(index)
 
 
 app = create_app()

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -57,6 +58,9 @@ class Settings(BaseSettings):
     plan_max_days: int = 7
     review_lease_minutes: int = 30
     public_cache_seconds: int = 60
+
+    # 打包运行时：构建好的前端目录（存在就由后端托管，省掉 vite dev server）
+    web_dist: Path | None = None
 
     @model_validator(mode="after")
     def _reject_shared_defaults(self) -> Settings:

@@ -55,6 +55,9 @@ from pathlib import Path
 # 先把 services/api 加回来，后续 import app.* 才能找到包。
 REPO_ROOT = Path(__file__).resolve().parents[1]
 API_ROOT = REPO_ROOT / "services" / "api"
+if not (API_ROOT / "app").is_dir():
+    # 便携包（Release zip）里 app/ 就在根目录，没有 services/api 这一层。
+    API_ROOT = REPO_ROOT
 DEFAULT_DATA = API_ROOT / "app" / "modules" / "catalog" / "seed_data.json"
 if str(API_ROOT) not in sys.path:
     sys.path.insert(0, str(API_ROOT))
