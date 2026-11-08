@@ -6,6 +6,7 @@
 #   bash scripts/demo_up.sh --no-serve   # 只准备数据（迁移 + 种子 + 冒烟），不启动服务
 #   bash scripts/demo_up.sh --serve      # 配合 --fresh：重建完继续起服务
 #   bash scripts/demo_up.sh --smoke      # 起服务前先跑一次端到端冒烟
+#   bash scripts/demo_up.sh --no-open    # 起服务但不自动打开浏览器
 #
 # 默认库是 services/api/demo.db（SQLite）。换库：
 #   bash scripts/demo_up.sh --db-url "postgresql+psycopg://user:pass@localhost/culturalwalk"
@@ -23,13 +24,14 @@ FRESH=0
 SERVE=1
 SERVE_EXPLICIT=0
 SMOKE=0
+OPEN_BROWSER=1
 API_PORT="${API_PORT:-8000}"
 # 前端固定 5173：apps/web/scripts/dev-real.mjs 把端口写死在里面，同时负责把
 # VITE_USE_MOCK=false 传给 vite。用普通 `pnpm dev` 会走假数据，登录页连演示账号都对不上。
 WEB_PORT=5173
 
 usage() {
-  sed -n '2,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
@@ -39,6 +41,7 @@ while (( $# > 0 )); do
     --no-serve) SERVE=0; SERVE_EXPLICIT=1 ;;
     --serve) SERVE=1; SERVE_EXPLICIT=1 ;;
     --smoke) SMOKE=1 ;;
+    --no-open) OPEN_BROWSER=0 ;;
     --db-url) DB_URL="${2:?--db-url 后面要跟数据库地址}"; shift ;;
     --api-port) API_PORT="${2:?--api-port 后面要跟端口}"; shift ;;
     -h|--help) usage 0 ;;
@@ -49,6 +52,29 @@ done
 
 say() { printf '\n== %s\n' "$1"; }
 die() { printf '失败：%s\n' "$1" >&2; exit 1; }
+
+# 等一个地址真的能回 200，而不是 sleep 几秒赌它起好了。
+wait_for_http() {
+  local url="$1" limit="${2:-60}" i=0
+  while (( i < limit )); do
+    if curl -fsS -o /dev/null --max-time 2 "$url" 2>/dev/null; then
+      return 0
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+  return 1
+}
+
+# Git Bash 里没有 `start` 这个命令（那是 cmd 的内建命令），要借 cmd 起。
+open_browser() {
+  local url="$1"
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) cmd //c start "" "$url" >/dev/null 2>&1 || true ;;
+    Darwin) open "$url" >/dev/null 2>&1 || true ;;
+    *) xdg-open "$url" >/dev/null 2>&1 || true ;;
+  esac
+}
 
 # ---- 找 python：venv 优先，别用 Windows 商店占位 ---------------------------
 PY_BIN=""
@@ -182,13 +208,30 @@ PIDS+=("$!")
 
 cat <<EOF
 
-== 就绪
+== 启动中
   前端    http://localhost:$WEB_PORT
   后端    http://127.0.0.1:$API_PORT/docs
   账号    demo@demo.local / editor@demo.local / reviewer@demo.local
   密码    Demo12345!
 
+等两个端口都能访问后会自动打开浏览器；没弹出来就手动点上面的前端地址。
 Ctrl-C 一起停掉三个进程。
 EOF
+
+if wait_for_http "http://127.0.0.1:$API_PORT/health" 90; then
+  say "后端就绪 :$API_PORT"
+else
+  printf '后端 90 秒内没起来，看上面的日志。\n' >&2
+fi
+
+if wait_for_http "http://localhost:$WEB_PORT/" 120; then
+  say "前端就绪 :$WEB_PORT"
+  if (( OPEN_BROWSER )); then
+    say "打开浏览器 http://localhost:$WEB_PORT"
+    open_browser "http://localhost:$WEB_PORT"
+  fi
+else
+  printf '前端 120 秒内没起来，看上面的 vite 日志。\n' >&2
+fi
 
 wait
