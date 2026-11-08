@@ -76,7 +76,7 @@ export function toDrafts(raw: { items?: RouteDraft[] } | null | undefined): Rout
   return toPage(raw).items
 }
 
-/** 裁决请求体：后端字段叫 reason，且有 10 字下限；approve 不带理由。 */
+/** 裁决请求体：后端字段叫 reason，且有 10 字下限。通过时填的备注也照样带上（存进审核记录）。 */
 export type DecisionAction = 'approve' | 'request_changes' | 'reject'
 
 export function decisionPayload(
@@ -84,7 +84,7 @@ export function decisionPayload(
   note: string,
 ): { action: DecisionAction; reason?: string } {
   const reason = note.trim()
-  if (action === 'approve' || !reason) return { action }
+  if (!reason) return { action }
   return { action, reason }
 }
 
