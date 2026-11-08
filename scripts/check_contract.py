@@ -86,6 +86,22 @@ def main() -> int:
     for path in unresolved:
         errors.append(f"path 定义不是对象：{path}")
 
+    # 6. B10：release 与投稿详情会返回 403/409（任务不属于我、状态不对），
+    # 契约必须声明；这两个操作不在 routes 路由范围内，单独点名断言。
+    for path, method, required in (
+        ("/review/tasks/{task_id}/release", "post", {200, 403, 404, 409}),
+        ("/submissions/{submission_id}", "get", {200, 403, 404}),
+    ):
+        op = (paths.get(path) or {}).get(method)
+        if op is None:
+            errors.append(f"{method.upper()} {path} 契约里找不到对应操作")
+            continue
+        declared = {
+            int(code) for code in (op.get("responses") or {}) if str(code).isdigit()
+        }
+        for code in sorted(required - declared):
+            errors.append(f"{method.upper()} {path} 契约缺状态码 {code}（B10）")
+
     print(f"契约文件：{CONTRACT.relative_to(ROOT)}")
     print(f"路径 {len(paths)} 个，操作 {op_count} 个，定义 {sum(len(v) for v in components.values())} 个")
     for w in warnings:

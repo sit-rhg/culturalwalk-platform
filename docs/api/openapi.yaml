@@ -461,6 +461,12 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ReviewTask" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
 
   /review/tasks/{task_id}/decision:
     post:
@@ -507,6 +513,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SubmissionDetail" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
