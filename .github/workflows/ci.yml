@@ -49,6 +49,8 @@ jobs:
         env:
           DATABASE_URL: postgresql+psycopg://cw:cw@localhost:5432/culturalwalk
           JWT_SECRET: ci-secret
+          # PG 专属用例平时会 skip；CI 设了这个就必须真连上（tests/test_postgres_gate.py）
+          REQUIRE_POSTGRES: "1"
         run: pytest -q
       - name: Migration 可重放
         working-directory: services/api
@@ -79,6 +81,84 @@ jobs:
         run: pnpm -C apps/web test
       - name: Build
         run: pnpm -C apps/web build
+
+  # 真浏览器跑主链路：登录 → 投稿 → 审核 → 发布 → 评论。
+  # 单测（vitest）跑的是假数据，只有这一层能发现「假数据对得上、真接口对不上」。
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: cw
+          POSTGRES_PASSWORD: cw
+          POSTGRES_DB: culturalwalk
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U cw"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql+psycopg://cw:cw@localhost:5432/culturalwalk
+      JWT_SECRET: ci-secret
+      REQUIRE_POSTGRES: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install backend
+        working-directory: services/api
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: 迁移 + 演示种子
+        working-directory: services/api
+        run: |
+          alembic upgrade head
+          python ../../scripts/seed_demo.py --database-url "$DATABASE_URL"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install frontend
+        run: pnpm install --frozen-lockfile || pnpm install
+      - name: Install Playwright Chromium
+        working-directory: apps/web
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Start API
+        working-directory: services/api
+        run: |
+          nohup uvicorn app.main:app --host 127.0.0.1 --port 8000 > /tmp/api.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8000/api/v1/health; then
+              echo "api ready"; exit 0
+            fi
+            sleep 1
+          done
+          echo "api 没起来，日志如下："; cat /tmp/api.log; exit 1
+      - name: E2E（真接口 + 真浏览器）
+        working-directory: apps/web
+        env:
+          E2E_CHANNEL: chromium
+          # vite 默认只绑 localhost，用 127.0.0.1 在 Linux 上可能连不上（IPv6 优先）
+          E2E_BASE_URL: http://localhost:5173
+        run: pnpm test:e2e
+      - name: 失败时留证据
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failure
+          path: |
+            apps/web/test-results
+            /tmp/api.log
+          if-no-files-found: ignore
 
   contract:
     runs-on: ubuntu-latest

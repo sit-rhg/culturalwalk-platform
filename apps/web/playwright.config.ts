@@ -7,6 +7,10 @@ import { defineConfig, devices } from '@playwright/test'
  */
 const PORT = Number(process.env.E2E_PORT ?? 5173)
 const baseURL = process.env.E2E_BASE_URL ?? `http://localhost:${PORT}`
+// 本机默认用系统 Chrome（免 `playwright install`）；CI 里没有 Chrome，
+// 用 `E2E_CHANNEL=chromium` 走 Playwright 自带的 Chromium。
+const CHANNEL = process.env.E2E_CHANNEL ?? 'chrome'
+const browserUse = CHANNEL === 'chromium' ? {} : { channel: CHANNEL }
 
 export default defineConfig({
   testDir: './e2e',
@@ -27,9 +31,10 @@ export default defineConfig({
   },
   projects: [
     {
-      name: 'chrome',
-      // 本机没装 Playwright 自带浏览器，直接用系统 Chrome，免 playwright install
-      use: { ...devices['Desktop Chrome'], channel: 'chrome' },
+      name: CHANNEL === 'chromium' ? 'chromium' : 'chrome',
+      // 本机没装 Playwright 自带浏览器，直接用系统 Chrome，免 playwright install；
+      // CI 里用 E2E_CHANNEL=chromium 走自带的 Chromium。
+      use: { ...devices['Desktop Chrome'], ...browserUse },
     },
   ],
   webServer: {
