@@ -9,6 +9,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.modules.audit.models import AuditLog
 from app.modules.catalog.models import Place, PlaceStatus
 from app.modules.community.models import Comment, Favorite
+from app.modules.community.repository import CommunityRepository
 from app.modules.moderation.models import Publication, PublicationState
 from app.modules.routes.models import RouteDraft, RouteVersion
 
@@ -400,6 +402,43 @@ def test_pin_only_route_author(
         headers={**admin_headers, "Idempotency-Key": _key()},
     )
     assert missing.status_code == 404
+
+
+def test_concurrent_pin_is_conflict_not_500(
+    client: TestClient,
+    db_session: Session,
+    admin_headers: dict[str, str],
+    user_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """并发置顶：另一路已经提交了置顶，这边 unpin 看不到它，只能撞唯一索引。
+
+    真实场景是 READ COMMITTED 快照差；这里把 unpin 换成空操作来稳定复现，
+    断言的是「撞索引要翻成可重试的 409，而不是 500」。
+    """
+    route_id = _published_route(db_session, author_id=ADMIN_ID)
+    first = _post_comment(client, user_headers, route_id)
+    second = _post_comment(client, user_headers, route_id, body="第二条评论")
+    assert (
+        client.post(
+            f"{COMMENTS_API}/{first}/pin",
+            headers={**admin_headers, "Idempotency-Key": _key()},
+        ).status_code
+        == 200
+    )
+
+    monkeypatch.setattr(
+        CommunityRepository,
+        "unpin_others",
+        lambda self, *, route_id, keep_id: None,
+    )
+    conflict = client.post(
+        f"{COMMENTS_API}/{second}/pin",
+        headers={**admin_headers, "Idempotency-Key": _key()},
+    )
+
+    assert conflict.status_code == 409
+    assert conflict.json()["error"]["code"] == "COMMENT_PIN_CONFLICT"
 
 
 def test_comment_cursor_pagination(

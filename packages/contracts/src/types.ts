@@ -1916,6 +1916,11 @@ export interface components {
             culture_tags?: string[];
             /** @enum {string} */
             status?: "draft" | "verified";
+            /**
+             * @description 坐标所在的坐标系。默认 OGC:CRS84（等价 WGS84）；GCJ-02 是火星坐标，前端要按它做偏移纠正，不能当 WGS84 画。
+             * @enum {string}
+             */
+            crs?: "OGC:CRS84" | "WGS84" | "GCJ-02";
         };
         PlaceDetail: components["schemas"]["Place"] & {
             facts?: components["schemas"]["PlaceFact"][];
@@ -1930,6 +1935,12 @@ export interface components {
             lon: number;
             summary?: string;
             culture_tags?: string[];
+            /**
+             * @description 提交坐标所用的坐标系；响应会原样回显，避免 GCJ-02 被当成 WGS84。
+             * @default OGC:CRS84
+             * @enum {string}
+             */
+            crs: "OGC:CRS84" | "WGS84" | "GCJ-02";
         };
         PlaceFact: {
             /** Format: uuid */

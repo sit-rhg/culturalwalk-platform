@@ -326,6 +326,9 @@ onMounted(async () => {
             <button class="btn ghost small" type="button" @click="openModal('request_changes')">
               退回修改
             </button>
+            <button class="btn ghost small" type="button" @click="openModal('reject')">
+              拒绝
+            </button>
           </div>
         </template>
 
@@ -380,6 +383,27 @@ onMounted(async () => {
           @click="submitDecision"
         >
           {{ submitting ? '提交中…' : '确认退回' }}
+        </button>
+      </template>
+    </Modal>
+
+    <Modal :open="modalAction === 'reject'" title="拒绝投稿" @close="closeModal">
+      <p class="muted">拒绝是终态：草稿回到编辑状态，作者会收到带理由的通知。</p>
+      <label class="field">
+        <span class="label">拒绝理由（必填）</span>
+        <textarea v-model="note" class="textarea" placeholder="写清楚为什么不通过，作者会收到通知" />
+      </label>
+      <p v-if="noteError" class="error-text">{{ noteError }}</p>
+      <p v-if="actionError" class="error-text">{{ actionError }}</p>
+      <template #footer>
+        <button class="btn ghost small" type="button" @click="closeModal">取消</button>
+        <button
+          class="btn small"
+          type="button"
+          :disabled="!!noteError || submitting"
+          @click="submitDecision"
+        >
+          {{ submitting ? '提交中…' : '确认拒绝' }}
         </button>
       </template>
     </Modal>

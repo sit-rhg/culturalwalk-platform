@@ -19,7 +19,17 @@ from app.modules.catalog.models import FactConfidence, Place, PlaceFact, PlaceSo
 ENDPOINT = "/api/v1/places"
 BASE_TIME = datetime(2026, 10, 1, 8, 0, tzinfo=UTC)
 
-PLACE_KEYS = {"id", "name", "district", "lat", "lon", "summary", "culture_tags", "status"}
+PLACE_KEYS = {
+    "id",
+    "name",
+    "district",
+    "lat",
+    "lon",
+    "summary",
+    "culture_tags",
+    "status",
+    "crs",
+}
 DETAIL_KEYS = PLACE_KEYS | {"facts", "open_hours", "open_hours_verified_at"}
 
 
@@ -36,6 +46,7 @@ def _add_place(
     lon: str = "112.935000",
     created_at: datetime | None = None,
     open_hours: str | None = None,
+    crs: str = "OGC:CRS84",
 ) -> uuid.UUID:
     """直接落库造数据：接口只读，不走 POST /places（那张卡不在 CA-03 里）。"""
     with session_factory() as db:
@@ -48,6 +59,7 @@ def _add_place(
             status=status,
             lat=Decimal(lat),
             lon=Decimal(lon),
+            crs=crs,
             created_at=created_at or BASE_TIME,
             open_hours=open_hours,
         )
@@ -116,6 +128,16 @@ def test_list_shape_matches_contract(
     assert isinstance(item["lat"], float)
     assert abs(item["lat"] - 28.185) < 1e-9
     assert client.get(ENDPOINT).json()["next_cursor"] is None
+
+
+def test_list_and_detail_echo_the_place_crs(
+    client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    """GCJ-02 的坐标必须原样回显坐标系，否则调用方会当 WGS84 画到偏几百米的位置。"""
+    place_id = _add_place(session_factory, name="火星坐标点", crs="GCJ-02")
+
+    assert _items(client.get(ENDPOINT))[0]["crs"] == "GCJ-02"
+    assert client.get(f"{ENDPOINT}/{place_id}").json()["crs"] == "GCJ-02"
 
 
 def test_empty_catalog(client: TestClient) -> None:

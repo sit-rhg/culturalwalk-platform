@@ -22,7 +22,14 @@ from sqlalchemy.orm import Session
 
 from app.core.costing import summarize_cost
 from app.core.deps import CurrentUser
-from app.core.errors import AppError, Forbidden, NotFound, Unauthorized, ValidationFailed
+from app.core.errors import (
+    AppError,
+    Conflict,
+    Forbidden,
+    NotFound,
+    Unauthorized,
+    ValidationFailed,
+)
 from app.core.pagination import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
@@ -376,11 +383,19 @@ class CommunityService:
             # 403 而不是 404：评论已经公开存在，装作没有反而让作者困惑。
             raise Forbidden("只有路线作者可以置顶评论", code="NOT_ROUTE_AUTHOR")
         if not comment.pinned:
-            # 每路线最多一条置顶：先清掉旧的再置顶（部分唯一索引是最后一道兜底）。
-            self.repo.unpin_others(route_id=comment.route_id, keep_id=comment.id)
-            self.db.flush()
-            comment.pinned = True
-            self.db.flush()
+            # 每路线最多一条置顶：先清掉旧的再置顶。两步放进同一个 SAVEPOINT：
+            # 并发时另一路置顶可能已经提交、这边的 unpin 看不到它，
+            # 落到部分唯一索引上就会撞 IntegrityError；不兜住就是 500。
+            try:
+                with self.db.begin_nested():
+                    self.repo.unpin_others(route_id=comment.route_id, keep_id=comment.id)
+                    comment.pinned = True
+                    self.db.flush()
+            except IntegrityError:
+                raise Conflict(
+                    "这条路线刚刚被另一条评论置顶，请刷新后重试",
+                    code="COMMENT_PIN_CONFLICT",
+                ) from None
             self._audit(
                 action="comment.pin",
                 object_type="comment",

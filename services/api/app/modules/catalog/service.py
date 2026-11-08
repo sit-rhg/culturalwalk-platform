@@ -313,6 +313,7 @@ def _detail_out(place: Place) -> PlaceDetailOut:
         summary=place.summary,
         culture_tags=list(place.culture_tags or []),
         status=str(place.status),
+        crs=place.crs,
         facts=[
             PlaceFactOut(
                 id=fact.id,

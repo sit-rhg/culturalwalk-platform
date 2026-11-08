@@ -71,6 +71,7 @@ def test_create_place_lands_as_draft_with_crs(
     assert body["status"] == "draft"
     assert body["name"] == "岳麓书院"
     assert body["culture_tags"] == ["历史", "书院"]
+    assert body["crs"] == "OGC:CRS84"
     assert set(body) == {
         "id",
         "name",
@@ -80,6 +81,7 @@ def test_create_place_lands_as_draft_with_crs(
         "summary",
         "culture_tags",
         "status",
+        "crs",
     }
 
     with session_factory() as db:
@@ -95,6 +97,9 @@ def test_create_place_accepts_gcj02(
 ) -> None:
     body = _create_place(client, crs="GCJ-02")
 
+    # 回显比落库更重要：前端只有拿到 crs 才知道该不该做偏移纠正，
+    # 之前只落库不回显，GCJ-02 的点位会被当成 WGS84 画到偏 300-500 米的位置。
+    assert body["crs"] == "GCJ-02"
     with session_factory() as db:
         assert db.get(Place, uuid.UUID(body["id"])).crs == "GCJ-02"
 
