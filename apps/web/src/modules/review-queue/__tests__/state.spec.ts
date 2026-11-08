@@ -64,6 +64,11 @@ describe('退回必须写理由', () => {
   it('还没选动作时不拦（弹窗刚打开）', () => {
     expect(decisionBlockedReason(null, '')).toBe('')
   })
+
+  it('拒绝也必须写理由，文案说清是拒绝而不是退回', () => {
+    expect(decisionBlockedReason('reject', '')).toBe('拒绝必须写理由')
+    expect(decisionBlockedReason('reject', '内容与长沙无关，不予收录')).toBe('')
+  })
 })
 
 describe('哪些任务能点裁决', () => {

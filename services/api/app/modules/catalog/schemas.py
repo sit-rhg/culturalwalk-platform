@@ -30,7 +30,11 @@ class SourceOut(BaseModel):
 
 
 class PlaceOut(BaseModel):
-    """openapi.yaml#Place 的 8 个字段，多一个都不返回。"""
+    """openapi.yaml#Place 的字段，多一个都不返回。
+
+    crs 必须回显：GCJ-02 的点位如果按 WGS84 画，会整体偏 300-500 米，
+    而调用方只有拿到这一列才知道要不要做偏移纠正。
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -42,6 +46,7 @@ class PlaceOut(BaseModel):
     summary: str | None = None
     culture_tags: list[str] = Field(default_factory=list)
     status: str
+    crs: str = "OGC:CRS84"
 
 
 class PlaceListOut(BaseModel):

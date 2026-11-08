@@ -5,7 +5,11 @@
 import type { Schemas } from '@/api/types'
 
 type ReviewTask = Schemas['ReviewTask']
-export type ReviewDecision = 'approve' | 'request_changes'
+/**
+ * 裁决动作：通过 / 退回修改 / 直接拒绝。
+ * 后端三种都支持，拒绝是终态（草稿回到编辑状态，作者会收到通知）。
+ */
+export type ReviewDecision = 'approve' | 'request_changes' | 'reject'
 
 const STATE_LABEL: Record<string, string> = {
   OPEN: '待领取',
@@ -50,7 +54,7 @@ export function canPublish(
 export const MIN_REASON_LENGTH = 10
 
 /**
- * 退回必须写理由，且理由长度 1-9 字后端会 422；通过时理由可以留空。
+ * 退回/拒绝必须写理由，且理由长度 1-9 字后端会 422；通过时理由可以留空。
  * 这里先拦住，省掉一次注定失败的请求。
  */
 export function decisionBlockedReason(
@@ -63,5 +67,6 @@ export function decisionBlockedReason(
     return `理由至少写 ${MIN_REASON_LENGTH} 个字`
   }
   if (action === 'approve') return ''
-  return text.length >= MIN_REASON_LENGTH ? '' : '退回必须写理由'
+  const label = action === 'reject' ? '拒绝' : '退回'
+  return text.length >= MIN_REASON_LENGTH ? '' : `${label}必须写理由`
 }
