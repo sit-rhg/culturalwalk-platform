@@ -54,6 +54,8 @@ jobs:
         run: echo "path=$(python -c 'import sys; print(sys.base_prefix)')" >> "$GITHUB_OUTPUT"
 
       - name: Build portable zip
+        env:
+          PYTHONIOENCODING: utf-8
         run: >-
           python scripts/package_windows.py
           --version "${{ steps.version.outputs.value }}"
