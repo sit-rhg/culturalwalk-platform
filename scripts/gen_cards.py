@@ -37,6 +37,10 @@ SECTIONS = {
     "notifications": ("notifications", "P2", "M3"),
     "前端": ("apps/web", "P2", "M4"),
     "测试与材料": ("qa", "P1", "M5"),
+    "收口A": ("qa", "P2", "M5"),
+    "收口B": ("qa", "P3", "M5"),
+    "收口C": ("qa", "P1", "M5"),
+    "收口D": ("qa", "P4", "M5"),
 }
 
 ROW = re.compile(r"^\|\s*([A-Z][A-Z0-9]{0,3}-[A-Z]{0,3}\d{2})(\s*\|.*)$")

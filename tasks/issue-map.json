@@ -19,11 +19,6 @@
     "title": "[CA-04] 地理编码 Adapter",
     "url": "https://github.com/sit-rhg/culturalwalk-platform/issues/15"
   },
-  "CA-05": {
-    "number": 162,
-    "title": "[CA-05] 来源入参对齐契约",
-    "url": "https://github.com/sit-rhg/culturalwalk-platform/issues/162"
-  },
   "CM-01": {
     "number": 30,
     "title": "[CM-01] 评论",
@@ -104,21 +99,6 @@
     "title": "[FE-09] 个人主页",
     "url": "https://github.com/sit-rhg/culturalwalk-platform/issues/53"
   },
-  "FE-10": {
-    "number": 169,
-    "title": "[FE-10] 路由守卫与登录回跳",
-    "url": "https://github.com/sit-rhg/culturalwalk-platform/issues/169"
-  },
-  "FE-11": {
-    "number": 170,
-    "title": "[FE-11] 请求超时与取消",
-    "url": "https://github.com/sit-rhg/culturalwalk-platform/issues/170"
-  },
-  "FE-12": {
-    "number": 171,
-    "title": "[FE-12] 主题深链",
-    "url": "https://github.com/sit-rhg/culturalwalk-platform/issues/171"
-  },
   "ID-01": {
     "number": 120,
     "title": "[ID-01] 用户与会话表",
@@ -138,11 +118,6 @@
     "number": 11,
     "title": "[ID-04] 个人主页接口",
     "url": "https://github.com/sit-rhg/culturalwalk-platform/issues/11"
-  },
-  "ID-05": {
-    "number": 161,
-    "title": "[ID-05] 登录失败路径时序对齐",
-    "url": "https://github.com/sit-rhg/culturalwalk-platform/issues/161"
   },
   "M0-01": {
     "number": 1,
@@ -219,16 +194,6 @@
     "title": "[ME-03] 资产查询与删除",
     "url": "https://github.com/sit-rhg/culturalwalk-platform/issues/42"
   },
-  "ME-04": {
-    "number": 167,
-    "title": "[ME-04] 媒体软删回收",
-    "url": "https://github.com/sit-rhg/culturalwalk-platform/issues/167"
-  },
-  "ME-05": {
-    "number": 168,
-    "title": "[ME-05] 存储后端真实接入",
-    "url": "https://github.com/sit-rhg/culturalwalk-platform/issues/168"
-  },
   "NT-01": {
     "number": 43,
     "title": "[NT-01] 通知表与列表",
@@ -274,16 +239,6 @@
     "title": "[PL-07] 行程转路线草稿",
     "url": "https://github.com/sit-rhg/culturalwalk-platform/issues/39"
   },
-  "PL-08": {
-    "number": 165,
-    "title": "[PL-08] 预算校验接线",
-    "url": "https://github.com/sit-rhg/culturalwalk-platform/issues/165"
-  },
-  "PL-09": {
-    "number": 166,
-    "title": "[PL-09] LLM 适配层接线",
-    "url": "https://github.com/sit-rhg/culturalwalk-platform/issues/166"
-  },
   "QA-01": {
     "number": 54,
     "title": "[QA-01] 权限负例矩阵",
@@ -303,11 +258,6 @@
     "number": 57,
     "title": "[QA-04] 答辩材料",
     "url": "https://github.com/sit-rhg/culturalwalk-platform/issues/57"
-  },
-  "QA-05": {
-    "number": 172,
-    "title": "[QA-05] 契约状态码覆盖",
-    "url": "https://github.com/sit-rhg/culturalwalk-platform/issues/172"
   },
   "RT-01": {
     "number": 16,
@@ -334,14 +284,24 @@
     "title": "[RT-05] 媒体绑定",
     "url": "https://github.com/sit-rhg/culturalwalk-platform/issues/20"
   },
-  "RT-06": {
-    "number": 163,
-    "title": "[RT-06] 幂等键按 key 存历史",
-    "url": "https://github.com/sit-rhg/culturalwalk-platform/issues/163"
+  "WP-01": {
+    "number": 174,
+    "title": "[WP-01] 前端与交互收口（A 组 9 条）",
+    "url": "https://github.com/sit-rhg/culturalwalk-platform/issues/174"
   },
-  "RT-07": {
-    "number": 164,
-    "title": "[RT-07] 失效点位不静默消失",
-    "url": "https://github.com/sit-rhg/culturalwalk-platform/issues/164"
+  "WP-02": {
+    "number": 175,
+    "title": "[WP-02] routes / moderation / community 收口（B 组 14 条）",
+    "url": "https://github.com/sit-rhg/culturalwalk-platform/issues/175"
+  },
+  "WP-03": {
+    "number": 176,
+    "title": "[WP-03] core / identity / media 收口（C 组 14 条）",
+    "url": "https://github.com/sit-rhg/culturalwalk-platform/issues/176"
+  },
+  "WP-04": {
+    "number": 177,
+    "title": "[WP-04] planner / catalog / 质量门收口（D 组 11 条）",
+    "url": "https://github.com/sit-rhg/culturalwalk-platform/issues/177"
   }
 }
