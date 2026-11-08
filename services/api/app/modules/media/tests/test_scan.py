@@ -14,7 +14,6 @@ import pytest
 from PIL import Image
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.core.errors import Conflict
 from app.modules.media.adapters.objects import LocalObjectStore
 from app.modules.media.models import MediaAsset, MediaZone, ScanState, utcnow
 from app.modules.media.scan import ScanRejected, scan_image
@@ -137,19 +136,38 @@ def test_rescan_is_idempotent(
         assert store.get(f"{clean_key}.thumb.webp") == thumb
 
 
-def test_missing_object_is_conflict_not_rejection(
+def test_missing_object_is_rejected_so_the_queue_keeps_moving(
+    session_factory: sessionmaker[Session], store: LocalObjectStore
+) -> None:
+    """对象丢了要判拒绝，不能停在 SCANNING。
+
+    旧行为是抛 409 让调用方重试，但队列按 created_at 升序取前 N 条：
+    一条永远扫不动的资产会把队头堵死，后面真正传完的文件永远轮不到。
+    """
+    with session_factory() as session:
+        asset = _stage(session, store, b"", store_bytes=False)
+        out = MediaService(session).scan_asset(asset.id, store=store)
+        session.commit()
+
+        assert out.scan_state == "rejected"
+        refreshed = session.get(MediaAsset, asset.id)
+        assert refreshed is not None
+        assert refreshed.scan_state is ScanState.REJECTED
+
+
+def test_missing_object_does_not_block_later_assets(
     session_factory: sessionmaker[Session], store: LocalObjectStore
 ) -> None:
     with session_factory() as session:
-        asset = _stage(session, store, b"", store_bytes=False)
-        with pytest.raises(Conflict) as exc:
-            MediaService(session).scan_asset(asset.id, store=store)
-        assert exc.value.code == "MEDIA_OBJECT_MISSING"
-        session.rollback()
+        _stage(session, store, b"", store_bytes=False)
+        _stage(session, store, _jpeg_with_gps())
+        service = MediaService(session)
 
-        refreshed = session.get(MediaAsset, asset.id)
-        assert refreshed is not None
-        assert refreshed.scan_state is ScanState.SCANNING
+        counts = service.scan_pending(store=store, limit=10)
+        session.commit()
+
+        assert counts == {"scanned": 2, "clean": 1, "rejected": 1, "skipped": 0}
+        assert service.repo.list_scanning(10) == []
 
 
 def test_scan_pending_mixes_clean_and_rejected(

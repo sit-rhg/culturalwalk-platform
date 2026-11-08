@@ -15,6 +15,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -26,6 +27,7 @@ from sqlalchemy.pool import StaticPool
 from app.core.db import Base, get_db
 from app.core.deps import create_access_token
 from app.main import create_app
+from app.modules.catalog.models import Place, PlaceStatus
 from app.modules.planner.models import (
     AgentName,
     AgentStep,
@@ -39,6 +41,27 @@ from app.modules.planner.worker import claim_and_run
 
 API = "/api/v1/plans"
 AGENT_FLOW = ["researcher", "planner", "critic", "verifier"]
+
+
+def _seed_places(db: Session, count: int = 4) -> None:
+    """给默认候选源铺几条已核验点位。
+
+    不铺的话 researcher 拿不到候选、日程为空 —— 那已经不是「生成成功」，
+    走的是 PLAN_EMPTY 的失败收口（见 test_empty_schedule_is_failed_instead_of_ready）。
+    """
+    for index in range(count):
+        db.add(
+            Place(
+                id=uuid.uuid4(),
+                name=f"测试点位 {index + 1}",
+                lat=Decimal("28.190000") + Decimal(index) / 1000,
+                lon=Decimal("112.950000") + Decimal(index) / 1000,
+                district="岳麓区",
+                culture_tags=["历史"] if index % 2 == 0 else ["美食"],
+                status=PlaceStatus.VERIFIED,
+            )
+        )
+    db.commit()
 
 
 @pytest.fixture()
@@ -177,6 +200,7 @@ def test_submit_replay_returns_the_same_run(client: TestClient, db: Session) -> 
 
 
 def test_worker_runs_the_queued_job_to_ready(client: TestClient, db: Session) -> None:
+    _seed_places(db)
     body = _submit(client, _headers())
 
     assert claim_and_run(db) is True
@@ -242,6 +266,7 @@ def test_job_is_given_up_after_max_attempts(
 
 
 def test_expired_lease_is_reclaimed(client: TestClient, db: Session) -> None:
+    _seed_places(db)
     body = _submit(client, _headers())
     job = _only_job(db)
     # 模拟「worker 领了活然后崩了」：状态停在 RUNNING，租约已经过期
@@ -299,6 +324,7 @@ def test_detail_shows_ready_with_steps_after_the_worker_runs(
 ) -> None:
     user_id = str(uuid.uuid4())
     headers = _headers(user_id)
+    _seed_places(db)
     body = _submit(client, headers)
     assert claim_and_run(db) is True
 
@@ -350,6 +376,7 @@ def test_unhandled_exception_is_retried_instead_of_killing_the_worker(
     client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """worker 侧的未捕获异常要回滚、记账、继续；不能把整个进程带走。"""
+    _seed_places(db)
     _submit(client, _headers())
 
     def boom(self: Any, *args: Any, **kwargs: Any) -> Any:
@@ -365,3 +392,25 @@ def test_unhandled_exception_is_retried_instead_of_killing_the_worker(
     monkeypatch.undo()
     assert claim_and_run(db, now=job.available_at + timedelta(seconds=1)) is True
     assert _only_job(db).state is JobState.DONE
+
+
+def test_empty_schedule_is_failed_instead_of_ready(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """排不出任何日程时不能进 READY：空行程 + 0 元是假成功，用户会以为生成好了。"""
+    body = _submit(client, _headers())
+    monkeypatch.setattr(
+        "app.modules.planner.service.catalog_candidate_source",
+        lambda db: lambda ctx: [],
+    )
+
+    assert claim_and_run(db) is True
+
+    job = _only_job(db)
+    # 第一次失败按退避重试，不算终局；关键是原因与行程状态要对。
+    assert job.state is JobState.PENDING
+    assert "PLAN_EMPTY" in (job.last_error or "")
+    itinerary = db.get(Itinerary, uuid.UUID(body["id"]))
+    assert itinerary is not None
+    assert itinerary.state is PlanState.FAILED
+    assert itinerary.error_code == "PLAN_EMPTY"

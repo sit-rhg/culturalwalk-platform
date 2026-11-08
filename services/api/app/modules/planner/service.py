@@ -81,6 +81,9 @@ MAX_JOB_ATTEMPTS: Final[int] = 3
 JOB_BACKOFF_SECONDS: Final[tuple[int, ...]] = (30, 120, 600)
 # 库里只留能定位的一句，完整堆栈进日志。
 ERROR_PREVIEW_CHARS: Final[int] = 200
+# 流水线「跑通」但一个日程都没排出来：对用户等于没生成，必须按失败收口，
+# 否则会出现 READY + 空行程 + 0 元的假成功。
+PLAN_EMPTY_CODE: Final[str] = "PLAN_EMPTY"
 
 # 状态机（docs/02 §3.5）：只有这三条边合法，表外的一切组合都拒绝。
 # 值那一列是"触发动作"，验收、审计日志、以后的事件名都复用它，
@@ -477,6 +480,15 @@ class PlannerService:
                     output_digest=step.output_digest,
                     duration_ms=step.duration_ms,
                 )
+            )
+        if result.ok and not result.context.schedule:
+            # 四个岗位都说「成功」，但日程是空的（候选点位不足/全被筛掉）。
+            # 这种情况不能让 run 进 READY：前端会拿到一份空行程当成生成结果。
+            result = RunResult(
+                ok=False,
+                context=result.context,
+                steps=result.steps,
+                error_code=PLAN_EMPTY_CODE,
             )
         if result.ok:
             self.persist_plan(itinerary, result.context, places=places)
