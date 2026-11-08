@@ -70,13 +70,24 @@ export function removeNode<T>(list: readonly T[], index: number): T[] {
   return list.filter((_, itemIndex) => itemIndex !== index)
 }
 
+/** 契约 RouteNodeInput.stay_minutes 是 10..480；只判 >0 会让 1-9 分钟一路放行到 422。 */
+export const MIN_STAY_MINUTES = 10
+export const MAX_STAY_MINUTES = 480
+
 /** 返回第一条错误文案，全通过给 null；先本地拦，避免把无效数据发给接口 */
 export function validateNodes(nodes: readonly EditableNode[]): string | null {
   for (let index = 0; index < nodes.length; index += 1) {
     const node = nodes[index]
     if (!node.place_id) return '第 ' + (index + 1) + ' 个节点没有绑定地点'
-    const stay = Number(node.stay_minutes)
-    if (!Number.isFinite(stay) || stay <= 0) return '第 ' + (index + 1) + ' 个节点的停留分钟要大于 0'
+    const stay = Math.round(Number(node.stay_minutes))
+    if (!Number.isFinite(stay)) return '第 ' + (index + 1) + ' 个节点的停留分钟要填数字'
+    if (stay < MIN_STAY_MINUTES || stay > MAX_STAY_MINUTES) {
+      return (
+        '第 ' +
+        (index + 1) +
+        ` 个节点的停留分钟要在 ${MIN_STAY_MINUTES}-${MAX_STAY_MINUTES} 之间`
+      )
+    }
     if (!isPriceInputValid(node.price_yuan)) {
       return '第 ' + (index + 1) + ' 个节点的门票价格要填非负数字'
     }

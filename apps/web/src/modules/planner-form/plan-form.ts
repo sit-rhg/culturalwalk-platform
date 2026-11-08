@@ -27,7 +27,8 @@ export interface PlannerForm {
 export const DAYS_MIN = 1
 export const DAYS_MAX = 7
 export const PEOPLE_MIN = 1
-export const PEOPLE_MAX = 10
+/** 与契约 / 后端 PlanIn 对齐：people 是 1-12，前端拦到 10 会误伤 11-12 人出行 */
+export const PEOPLE_MAX = 12
 
 export const CITY_OPTIONS: { value: string; label: string }[] = [
   { value: 'changsha', label: '长沙' },

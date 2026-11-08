@@ -7,6 +7,8 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  canDecide,
+  canPublish,
   decisionBlockedReason,
   isPendingTask,
   reviewTaskStateLabel,
@@ -61,5 +63,34 @@ describe('退回必须写理由', () => {
 
   it('还没选动作时不拦（弹窗刚打开）', () => {
     expect(decisionBlockedReason(null, '')).toBe('')
+  })
+})
+
+describe('哪些任务能点裁决', () => {
+  it('只有审核中能裁决：OPEN 会 409 未领取，COMPLETED 会 409 已结束', () => {
+    expect(canDecide({ state: 'CLAIMED' } as never)).toBe(true)
+    expect(canDecide({ state: 'OPEN' } as never)).toBe(false)
+    expect(canDecide({ state: 'COMPLETED' } as never)).toBe(false)
+    expect(canDecide(null)).toBe(false)
+  })
+})
+
+describe('发布按钮什么时候出现', () => {
+  const approved = {
+    state: 'COMPLETED',
+    completed_action: 'approve',
+    submission_id: 'sub-1',
+  } as never
+
+  it('通过后出现，发布过就消失（再点必 409）', () => {
+    expect(canPublish(approved)).toBe(true)
+    expect(canPublish(approved, ['sub-1'])).toBe(false)
+  })
+
+  it('退回、未完成、没提交号都不出现', () => {
+    expect(
+      canPublish({ state: 'COMPLETED', completed_action: 'request_changes' } as never),
+    ).toBe(false)
+    expect(canPublish({ state: 'CLAIMED', completed_action: null } as never)).toBe(false)
   })
 })

@@ -81,10 +81,19 @@ describe('保存前校验', () => {
     expect(validateNodes([])).toBeNull()
   })
 
-  it('停留分钟必须大于 0', () => {
-    expect(validateNodes([node({ stay_minutes: 0 })])).toBe('第 1 个节点的停留分钟要大于 0')
+  it('停留分钟必须在契约的 10-480 之间', () => {
+    expect(validateNodes([node({ stay_minutes: 0 })])).toBe(
+      '第 1 个节点的停留分钟要在 10-480 之间',
+    )
+    expect(validateNodes([node({ stay_minutes: 9 })])).toBe(
+      '第 1 个节点的停留分钟要在 10-480 之间',
+    )
+    expect(validateNodes([node({ stay_minutes: 481 })])).toBe(
+      '第 1 个节点的停留分钟要在 10-480 之间',
+    )
+    expect(validateNodes([node({ stay_minutes: 10 })])).toBeNull()
     expect(validateNodes([node({ stay_minutes: Number.NaN })])).toBe(
-      '第 1 个节点的停留分钟要大于 0',
+      '第 1 个节点的停留分钟要填数字',
     )
   })
 

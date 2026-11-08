@@ -9,6 +9,7 @@ import DiffView from '@/modules/review-queue/diff-view.vue'
 import ReviewQueue from '@/modules/review-queue/index.vue'
 import { snapshotText, snapshotToText } from '@/modules/review-queue/diff'
 import {
+  canDecide,
   decisionBlockedReason,
   isPendingTask,
   reviewTaskStateLabel,
@@ -39,6 +40,8 @@ const loading = ref(true)
 const listError = ref('')
 const busyId = ref<string | null>(null)
 const notice = ref('')
+/** 已发布成功的 submission_id：发布后按钮要立刻消失，否则重试必 409 */
+const publishedSubmissionIds = ref<string[]>([])
 
 /** 审核通知走真接口（GET /notifications），审核任务本身还是演示数据 */
 const notices = ref<Notification[]>([])
@@ -169,6 +172,9 @@ async function publish(task: ReviewTask): Promise<void> {
       version_id: detail.version_id,
       content_hash: detail.content_hash,
     })
+    if (!publishedSubmissionIds.value.includes(submissionId)) {
+      publishedSubmissionIds.value = [...publishedSubmissionIds.value, submissionId]
+    }
     notice.value = '已发布上线，发现页现在能看到它'
   } catch (error) {
     listError.value = errorMessage(error)
@@ -298,6 +304,7 @@ onMounted(async () => {
           :labels="labels"
           :active-id="activeTask?.id ?? null"
           :busy-id="busyId"
+          :published-submission-ids="publishedSubmissionIds"
           @select="selectTask"
           @claim="claim"
           @publish="publish"
@@ -314,7 +321,7 @@ onMounted(async () => {
             <p v-else-if="detailError" class="error-text">{{ detailError }}</p>
             <DiffView v-else :previous="previousContent" :current="currentContent" />
           </div>
-          <div v-if="!detailLoading && !detailError" class="row actions">
+          <div v-if="canDecide(activeTask) && !detailLoading && !detailError" class="row actions">
             <button class="btn small" type="button" @click="openModal('approve')">通过</button>
             <button class="btn ghost small" type="button" @click="openModal('request_changes')">
               退回修改
@@ -328,6 +335,7 @@ onMounted(async () => {
           v-else
           :tasks="doneTasks"
           :labels="labels"
+          :published-submission-ids="publishedSubmissionIds"
           @publish="publish"
           :active-id="activeTask?.id ?? null"
           @select="selectTask"
