@@ -39,6 +39,21 @@ class MediaRepository:
         )
         return self.db.scalar(stmt)
 
+    def get_deleted_by_idempotency_key(
+        self, *, owner_id: uuid.UUID, idempotency_key: str
+    ) -> MediaAsset | None:
+        """找被软删的同键资产。
+
+        唯一约束 `(owner_id, idempotency_key)` 不随 deleted_at 释放，
+        所以重放一个已删资产的键必须在这里拦下，否则直插会撞约束变成 500。
+        """
+        stmt = select(MediaAsset).where(
+            MediaAsset.owner_id == owner_id,
+            MediaAsset.idempotency_key == idempotency_key,
+            MediaAsset.deleted_at.is_not(None),
+        )
+        return self.db.scalar(stmt)
+
     def list_scanning(self, limit: int) -> list[MediaAsset]:
         """待扫描队列：已确认上传（scanning）且仍在隔离区的资产，先到先扫。
 

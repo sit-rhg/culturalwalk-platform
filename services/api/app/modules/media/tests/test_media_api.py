@@ -281,3 +281,18 @@ def test_reference_gate_blocks_until_clean_and_publish_is_idempotent(
         "media.scan.clean",
         "media.publish",
     ]
+
+
+def test_intent_key_reuse_after_delete_is_conflict_not_500(client: TestClient) -> None:
+    """软删不释放唯一约束：同键重放必须得到明确的 409，而不是 IntegrityError 的 500。"""
+    me = uuid.uuid4()
+    key = str(uuid.uuid4())
+    first = _intent(client, me, key=key, role="editor")
+    assert first.status_code == 201, first.text
+    asset_id = first.json()["asset_id"]
+    deleted = client.delete(f"{BASE}/{asset_id}", headers=_headers(me, "editor"))
+    assert deleted.status_code == 204, deleted.text
+
+    replay = _intent(client, me, key=key, role="editor")
+    assert replay.status_code == 409, replay.text
+    assert replay.json()["error"]["code"] == "MEDIA_INTENT_DELETED"

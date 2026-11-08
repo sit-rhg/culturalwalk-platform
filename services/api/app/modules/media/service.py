@@ -105,6 +105,17 @@ class MediaService:
                 raise Conflict("上传地址已过期，请重新申请", code="MEDIA_UPLOAD_EXPIRED")
             return self._intent_out(existing)
 
+        deleted = self.repo.get_deleted_by_idempotency_key(
+            owner_id=owner_id, idempotency_key=idempotency_key
+        )
+        if deleted is not None:
+            # 键被软删的资产占着（唯一约束不看 deleted_at）：直插会 500。
+            # 让客户端换个键，比抛内部错误更好排查。
+            raise Conflict(
+                "该幂等键对应的上传已删除，请换一个新的 Idempotency-Key",
+                code="MEDIA_INTENT_DELETED",
+            )
+
         asset_id = uuid.uuid4()
         asset = MediaAsset(
             id=asset_id,
@@ -282,10 +293,16 @@ class MediaService:
 
         try:
             raw = store.get(asset.object_key)
-        except ObjectNotFound as exc:
-            raise Conflict(
-                "对象存储里找不到该文件，请重新上传", code="MEDIA_OBJECT_MISSING"
-            ) from exc
+        except ObjectNotFound:
+            # 对象不在存储里多半是「点了完成但文件没传成」。这里直接判拒绝：
+            # 若继续停在 SCANNING，list_scanning 每轮都先取到它（limit 固定），
+            # 后面真正传完的文件永远轮不到 —— 队头饥饿。
+            return self.mark_rejected(
+                asset.id,
+                code="MEDIA_OBJECT_MISSING",
+                detail="对象存储里找不到该文件，请重新上传",
+                request_id=request_id,
+            )
 
         try:
             outcome = scan_image(raw, asset.mime)
