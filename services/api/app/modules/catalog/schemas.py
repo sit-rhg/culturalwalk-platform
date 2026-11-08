@@ -20,13 +20,19 @@ def _required_text(value: str) -> str:
 
 
 class SourceOut(BaseModel):
-    """openapi.yaml#Source：口述来源没有 URL，所以 url/publisher 可空。"""
+    """openapi.yaml#Source：口述来源没有 URL，所以 url/publisher 可空。
+
+    accessed_at / license 是溯源信息（D8）：网页会改版，答辩时被问「这个说法
+    哪来的、哪一版、能不能转」要能答上来，所以读接口也要带出去。
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
     title: str
     url: str | None = None
     publisher: str | None = None
+    accessed_at: datetime | None = None
+    license: str | None = None
 
 
 class PlaceOut(BaseModel):
@@ -85,32 +91,39 @@ CultureTag = Annotated[str, Field(min_length=1, max_length=32)]
 
 
 class SourceIn(BaseModel):
-    """录入一条来源。
+    """录入一条来源（契约 Source，所有字段可选）。
 
-    契约里 source/url 可空（口述来源没有网址）；但本接口要求补一条文化资料时
-    必须能溯源，所以这里是必填，url 还必须是 http(s)。
+    契约里 title/url/publisher 全可不填：口述来源没有网址，档案也可能只剩
+    一个书名。**但「能不能标 verified」由业务规则管**——见 service.add_fact：
+    标成 verified 却没有任何来源，仍然会被拒（D6）。
     """
 
-    title: str = Field(min_length=1, max_length=255)
-    url: str = Field(min_length=1, max_length=2048)
+    title: str | None = Field(default=None, max_length=255)
+    url: str | None = Field(default=None, max_length=2048)
     publisher: str | None = Field(default=None, max_length=128)
+    # 授权/使用条款（如 CC-BY、公共领域）：引用别人整理的资料时要能说清能不能转载（D8）。
+    license: str | None = Field(default=None, max_length=64)
 
     @field_validator("title")
     @classmethod
-    def _title_not_blank(cls, value: str) -> str:
-        return _required_text(value)
+    def _title_blank_to_none(cls, value: str | None) -> str | None:
+        return value.strip() or None if value is not None else None
 
     @field_validator("url")
     @classmethod
-    def _http_url(cls, value: str) -> str:
-        """只认 http/https 且有主机名：ftp:、javascript:、裸域名都不算来源。"""
+    def _http_url(cls, value: str | None) -> str | None:
+        """有网址就只认 http/https 且有主机名：ftp:、javascript:、裸域名都不算来源。"""
+        if value is None:
+            return None
         text = value.strip()
+        if not text:
+            return None
         parsed = urlsplit(text)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("来源链接必须是 http(s) URL")
         return text
 
-    @field_validator("publisher")
+    @field_validator("publisher", "license")
     @classmethod
     def _blank_to_none(cls, value: str | None) -> str | None:
         return value.strip() or None if value is not None else None
@@ -146,15 +159,16 @@ class PlaceCreateIn(BaseModel):
 
 
 class PlaceFactCreateIn(BaseModel):
-    """POST /places/{place_id}/facts 的请求体。
+    """POST /places/{place_id}/facts 的请求体（契约 PlaceFactInput）。
 
-    source 在契约里可选，本接口收紧为必填：没有来源的文化资料就是未经核实的传言，
-    产品红线要求"补资料必须带出处"。
+    source 在契约里可选，这里也放开：没有来源的旧资料、口述记录照样能入库，
+    只是会被标成 unverified 且不出现在公开详情里。**verified 必须带来源**这条
+    产品红线改由 service 判（有字段级说明的 422），不再靠 schema 一刀切（D6）。
     """
 
     claim: str = Field(min_length=1, max_length=2000)
     confidence: Literal["verified", "likely", "unverified"]
-    source: SourceIn
+    source: SourceIn | None = None
 
     @field_validator("claim")
     @classmethod

@@ -17,6 +17,8 @@ from sqlalchemy.orm import Session
 
 from app.modules.catalog.models import Place, PlaceStatus
 from app.modules.planner.agents.base import Candidate, PlanContext
+from app.modules.planner.place_facts import ClaimView
+from app.modules.planner.pricing import quote_from_claims
 
 # 每种点位的默认停留时长（分钟）。数值取自 docs/02 §2.5 的默认建议；
 # 没有分类型数据之前，用一张常量表比让模型瞎猜更可控。
@@ -51,6 +53,10 @@ def catalog_candidate_source(db: Session):
             tags = [str(tag) for tag in (place.culture_tags or [])]
             if themes and not (set(themes) & set(tags)):
                 continue
+            claims = _claims_of(place)
+            # 候选必须带价：挑刺员的「超预算」判断和详情页的费用汇总都只看这里。
+            # 以前留空 → 每项按 0 元算，over_budget 永远不触发（D1）。
+            quote = quote_from_claims(claims)
             picked.append(
                 Candidate(
                     place_id=str(place.id),
@@ -58,10 +64,12 @@ def catalog_candidate_source(db: Session):
                     category=tags[0] if tags else None,
                     lat=float(place.lat) if place.lat is not None else None,
                     lon=float(place.lon) if place.lon is not None else None,
+                    price_min=quote.min_cents,
+                    price_max=quote.max_cents,
                     stay_minutes=STAY_MINUTES.get(tags[0] if tags else "", DEFAULT_STAY_MINUTES),
                     # 出处必须带上：核价/核源的判断只看 source_ids，这里漏填会让
                     # 每个点位都被标成「待核实」，明明库里已经有来源链接（P-23）。
-                    source_ids=_source_ids(place),
+                    source_ids=_source_ids(claims),
                 )
             )
             if len(picked) >= ctx.days * CANDIDATES_PER_DAY:
@@ -71,16 +79,41 @@ def catalog_candidate_source(db: Session):
     return load
 
 
-def _source_ids(place: Place) -> list[str]:
-    """把点位的来源 id 去重后交给候选：一条说法带来源，这个点位就算有据可查。"""
-    seen: list[str] = []
+def _claims_of(place: Place) -> list[ClaimView]:
+    """把 ORM 的 facts 转成价格判定认识的「说法」。
+
+    直接读 `place.facts`（同一 session 里已 selectin 加载），不再走 catalog 的
+    详情接口：候选加载发生在 worker 里，多一次服务调用就多一次跨模块耦合。
+    """
+    claims: list[ClaimView] = []
     for fact in place.facts:
-        source_id = getattr(fact, "source_id", None)
-        if source_id is None:
+        claim = str(getattr(fact, "claim", "") or "")
+        if not claim:
             continue
-        text = str(source_id)
-        if text not in seen:
-            seen.append(text)
+        source = getattr(fact, "source", None)
+        source_id = getattr(fact, "source_id", None)
+        claims.append(
+            ClaimView(
+                claim=claim,
+                confidence=str(getattr(getattr(fact, "confidence", None), "value", "unverified")),
+                source_urls=(str(source.url),) if source is not None and source.url else (),
+                source_ids=(str(source_id),) if source_id is not None else (),
+            )
+        )
+    return claims
+
+
+def _source_ids(claims: list[ClaimView]) -> list[str]:
+    """把点位的来源编号去重后交给候选：一条说法带来源，这个点位就算有据可查。
+
+    存编号而不是 URL（D2）：URL 会改版、会 404，编号不会；转草稿时也要靠编号
+    把「这个点位凭什么这么说」带过去。
+    """
+    seen: list[str] = []
+    for claim in claims:
+        for source_id in claim.source_ids:
+            if source_id and source_id not in seen:
+                seen.append(source_id)
     return seen
 
 

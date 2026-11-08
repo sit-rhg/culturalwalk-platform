@@ -61,11 +61,14 @@ REASON_PLACE_MISSING: Final[str] = "点位资料缺失，待核实"
 
 
 class ClaimLike(Protocol):
-    """价格判定只依赖这三个字段，方便测试直接塞轻量对象。"""
+    """价格判定只依赖这几个字段，方便测试直接塞轻量对象。"""
 
     claim: str
     confidence: str
     source_urls: Sequence[str]
+    # 来源的编号（catalog 里 place_sources.id）。URL 会改版/失效，编号不会，
+    # 所以行程项要留的是编号；URL 只用于给人看。
+    source_ids: Sequence[str]
 
 
 class PricedLike(Protocol):
@@ -88,6 +91,9 @@ class PriceQuote:
     confidence: str
     source_urls: tuple[str, ...] = ()
     reason: str = REASON_UNKNOWN
+    # 采用的那条说法背后的来源编号（可以是多条：同一句话可能引了两份资料）。
+    # 放在最后，避免改动已有按位置传参的调用点。
+    source_ids: tuple[str, ...] = ()
 
     @property
     def known(self) -> bool:
@@ -157,6 +163,7 @@ def quote_from_claims(claims: Iterable[ClaimLike]) -> PriceQuote:
         if prices is None:
             continue
         urls = tuple(str(url) for url in claim.source_urls if url)
+        ids = tuple(str(sid) for sid in getattr(claim, "source_ids", ()) if sid)
         if claim.confidence in TRUSTED_CONFIDENCE:
             reason = REASON_VERIFIED if claim.confidence == VERIFIED else REASON_LIKELY
             return PriceQuote(
@@ -165,6 +172,7 @@ def quote_from_claims(claims: Iterable[ClaimLike]) -> PriceQuote:
                 confidence=claim.confidence,
                 source_urls=urls,
                 reason=reason,
+                source_ids=ids,
             )
         if fallback is None:
             # 有数字但来源不可信：数字给了，但必须挂 unverified + 说明，
@@ -175,6 +183,7 @@ def quote_from_claims(claims: Iterable[ClaimLike]) -> PriceQuote:
                 confidence=UNVERIFIED,
                 source_urls=urls,
                 reason=REASON_UNTRUSTED,
+                source_ids=ids,
             )
     if fallback is not None:
         return fallback
@@ -186,12 +195,16 @@ def quote_from_claims(claims: Iterable[ClaimLike]) -> PriceQuote:
     )
 
 
-def summarize(items: Iterable[PricedLike]) -> CostTotal:
+def summarize(items: Iterable[PricedLike], *, people: int = 1) -> CostTotal:
     """把行程里每一项的价格加总。
 
     缺价格的行不计入金额、单独计数：文档明确要求「缺失项单独计数，不假装是 0」，
     否则用户看到「0 元」会以为这一天真的不花钱。
+
+    单价是**每人**的票价，行程是多少人就得乘多少人：不乘的话两个人去博物馆
+    只收一张票的钱，预算校验也就永远不会触发（D1）。
     """
+    headcount = max(1, int(people or 1))
     min_total = 0
     max_total = 0
     unknown = 0
@@ -201,4 +214,8 @@ def summarize(items: Iterable[PricedLike]) -> CostTotal:
             continue
         min_total += item.price_min
         max_total += item.price_max
-    return CostTotal(min_total=min_total, max_total=max_total, unknown_count=unknown)
+    return CostTotal(
+        min_total=min_total * headcount,
+        max_total=max_total * headcount,
+        unknown_count=unknown,
+    )

@@ -11,6 +11,7 @@ import hashlib
 import json
 import uuid
 from collections.abc import Callable, Iterable
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -18,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.deps import CurrentUser
-from app.core.errors import Conflict, NotFound
+from app.core.errors import Conflict, NotFound, ValidationFailed
 from app.core.pagination import DEFAULT_LIMIT, MAX_LIMIT, decode_cursor, encode_cursor
 from app.modules.audit import service as audit
 from app.modules.catalog.models import (
@@ -35,6 +36,7 @@ from app.modules.catalog.schemas import (
     PlaceDetailOut,
     PlaceFactCreateIn,
     PlaceFactOut,
+    SourceIn,
     SourceOut,
 )
 
@@ -266,18 +268,25 @@ class CatalogService:
         if place is None:
             raise NotFound("地点不存在", code="PLACE_NOT_FOUND")
 
-        source = PlaceSource(
-            title=payload.source.title,
-            url=payload.source.url,
-            publisher=payload.source.publisher,
-        )
+        source, created = _source_for(self, payload.source)
+        # 产品红线仍然在：标成「已核实」却没给来源，就是把模型编的内容当事实写。
+        # schema 不再强制（契约里 source 可选），所以这条规则必须留在这里，
+        # 而且给字段级说明，前端能直接指着 source 输入框提示（D6）。
+        if payload.confidence == "verified" and source is None:
+            raise ValidationFailed(
+                "已核实的说法必须带来源",
+                details=[{"field": "source", "reason": "confidence=verified 时必须提供来源"}],
+            )
+
         fact = PlaceFact(
             place_id=place.id,
             claim=payload.claim,
             confidence=FactConfidence(payload.confidence),
             source=source,
         )
-        self.repo.add_source(source)
+        # 没有来源的 fact 照样入库：它是内部备忘/待补资料，读接口不会把它放出去。
+        if created and source is not None:
+            self.repo.add_source(source)
         self.repo.add_fact(fact)
         audit.write(
             self.db,
@@ -291,13 +300,48 @@ class CatalogService:
                     "place_id": str(place.id),
                     "claim": payload.claim,
                     "confidence": payload.confidence,
-                    "source_url": payload.source.url,
+                    "source_url": source.url if source is not None else None,
                 }
             ),
             request_id=request_id,
         )
         self._finish_idempotent(record, fact.id)
         return _fact_out(fact)
+
+
+def _source_for(
+    service: CatalogService, incoming: SourceIn | None
+) -> tuple[PlaceSource | None, bool]:
+    """来源去重 + 补齐溯源字段（D7/D8）。返回 (来源, 是否新建)。
+
+    同一本书/同一个链接被补了第二条 fact 时不再新插一行，否则「这条来源支撑
+    了多少条说法」永远算不出来；accessed_at 记「这次核对是哪一天」（网页会改版），
+    license 留着以后判断能不能转载。
+    """
+    if incoming is None:
+        return None, False
+    title_text = (incoming.title or "").strip()
+    url_text = (incoming.url or "").strip()
+    if not (title_text or url_text or (incoming.publisher or "").strip() or incoming.license):
+        # 传了个空对象等于没填，别凭空造一行「未命名来源」。
+        return None, False
+    title = title_text or url_text or "未命名来源"
+    existing = service.repo.find_source(title=title, url=url_text or None)
+    if existing is not None:
+        # 老行缺授权信息时用新填的补上；已有值不覆盖（不拿新说法改历史记录）。
+        if incoming.license and not existing.license:
+            existing.license = incoming.license
+        return existing, False
+    return (
+        PlaceSource(
+            title=title,
+            url=url_text or None,
+            publisher=incoming.publisher,
+            accessed_at=datetime.now(UTC),
+            license=incoming.license,
+        ),
+        True,
+    )
 
 
 def _fact_out(fact: PlaceFact) -> PlaceFactOut:

@@ -75,6 +75,8 @@ class SeedSource(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     url: str | None = None
     publisher: str | None = Field(default=None, max_length=128)
+    # 授权信息：能不能转载、能不能引用，是这个平台敢不敢把资料摆上网页的前提（D8）。
+    license: str | None = Field(default=None, max_length=128)
 
 
 class SeedFact(BaseModel):
@@ -198,6 +200,7 @@ def apply_seed(session: Session, places: list[SeedPlace]) -> SeedReport:
             url=src.url,
             publisher=src.publisher,
             accessed_at=datetime.now().astimezone(),
+            license=src.license,
         )
         for sid, (_place, src) in sources.items()
         if sid not in existing

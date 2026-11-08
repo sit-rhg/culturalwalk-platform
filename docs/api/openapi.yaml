@@ -1176,6 +1176,13 @@ components:
         title: { type: string }
         url: { type: [string, "null"] }
         publisher: { type: [string, "null"] }
+        accessed_at:
+          type: [string, "null"]
+          format: date-time
+          description: 这次核对是哪一天（网页会改版，时间要留在数据里）
+        license:
+          type: [string, "null"]
+          description: 授权方式（如 CC BY-SA 4.0）；能不能转载看这一项
 
     RouteNodeInput:
       type: object

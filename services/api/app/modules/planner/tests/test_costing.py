@@ -128,9 +128,12 @@ def test_quote_without_any_claim_is_pending() -> None:
 
 
 class _Item:
-    def __init__(self, price_min: int | None, price_max: int | None) -> None:
+    def __init__(
+        self, price_min: int | None, price_max: int | None, confidence: str = "unverified"
+    ) -> None:
         self.price_min = price_min
         self.price_max = price_max
+        self.confidence = confidence
 
 
 def test_summarize_counts_unknown_without_pretending_zero() -> None:
@@ -221,17 +224,22 @@ def test_persist_plan_writes_days_items_and_prices(db: Session) -> None:
             district="岳麓区",
             claims=(
                 ClaimView(
-                    claim="门票 60 元", confidence="verified", source_urls=("https://a.example",)
+                    claim="门票 60 元",
+                    confidence="verified",
+                    source_urls=("https://a.example",),
+                    source_ids=("src-yuelu",),
                 ),
             ),
         )
     }
 
-    PlannerService(db).persist_plan(
-        itinerary,
-        _context(_schedule(1, str(place_id)) + _schedule(2, str(place_id))),
-        places=places.get,
-    )
+    context = _context(_schedule(1, str(place_id)) + _schedule(2, str(place_id)))
+    # 核对员的结论：这个点位有出处（D2 之后，费用项的可信度要听它的，不能只看价格说法）。
+    context.verified = [
+        {"place_id": str(place_id), "confidence": "verified", "source_ids": ["src-yuelu"]}
+    ]
+
+    PlannerService(db).persist_plan(itinerary, context, places=places.get)
     db.flush()
 
     days = PlannerService(db).repo.days_for_itinerary(itinerary.id)
@@ -240,7 +248,8 @@ def test_persist_plan_writes_days_items_and_prices(db: Session) -> None:
     assert (item.order, item.stay_minutes, item.transport) == (1, 120, "metro")
     assert (item.price_min, item.price_max) == (6000, 6000)
     assert (item.confidence, item.note) == ("verified", REASON_VERIFIED)
-    assert item.source_ids == ["https://a.example"]
+    # 存的是来源编号，不是 URL（D2）：URL 会改版会 404，编号不会。
+    assert item.source_ids == ["src-yuelu"]
     assert item.start_time is not None and item.start_time.hour == 9
 
 
@@ -315,6 +324,9 @@ def _run_single_plan(
     *,
     place_source: PlaceSource | None,
     places: PlaceFactsSource | None,
+    budget_total: int = 10000,
+    people: int = 1,
+    days: int = 1,
 ) -> dict[str, object]:
     """走一遍真实链路：POST 建行程 → 代跑一次 worker → GET 详情。"""
 
@@ -341,7 +353,12 @@ def _run_single_plan(
     with TestClient(app) as client:
         created = client.post(
             API,
-            json={"city": "长沙", "days": 1, "people": 1, "budget_total": 10000},
+            json={
+                "city": "长沙",
+                "days": days,
+                "people": people,
+                "budget_total": budget_total,
+            },
             headers=headers,
         )
         assert created.status_code == 202
@@ -380,6 +397,8 @@ def test_detail_reports_cost_and_pending_items(
                 lat=28.18,
                 lon=112.94,
                 stay_minutes=120,
+                # 核对员会拿这些编号判断「这个点位有没有出处」（D2）。
+                source_ids=["src-yuelu"],
             ),
             Candidate(
                 place_id=str(unknown_id),
@@ -399,7 +418,10 @@ def test_detail_reports_cost_and_pending_items(
             lon=112.94,
             claims=(
                 ClaimView(
-                    claim="门票 60 元", confidence="verified", source_urls=("https://a.example",)
+                    claim="门票 60 元",
+                    confidence="verified",
+                    source_urls=("https://a.example",),
+                    source_ids=("src-yuelu",),
                 ),
             ),
         )
@@ -425,6 +447,67 @@ def test_detail_reports_cost_and_pending_items(
     assert body["cost"]["max_total"] == 6000
     assert body["cost"]["unknown_count"] == 1
     assert body["cost"]["currency"] == "CNY"
+
+
+def test_summarize_counts_cost_for_the_whole_party() -> None:
+    """报价是「每人多少钱」：两个人出门，总额要 ×2，否则预算判断永远不超（D1）。"""
+    items = [_Item(6000, 6000), _Item(1500, 2000)]
+    assert summarize(items, people=2) == CostTotal(
+        min_total=15000, max_total=16000, currency="CNY", unknown_count=0
+    )
+    # 人数缺失/为 0 时按 1 个人算，不能把总额乘成 0
+    assert summarize(items, people=0).min_total == 7500
+
+
+def test_over_budget_plan_never_becomes_ready(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """预算 500 元、2 人、一张 300 元的票 → 实际 600 元，必须判死而不是 READY（D1 验收）。"""
+    place_id = uuid.uuid4()
+
+    def place_source(_ctx: PlanContext) -> list[Candidate]:
+        return [
+            Candidate(
+                place_id=str(place_id),
+                name="岳麓书院",
+                lat=28.18,
+                lon=112.94,
+                stay_minutes=120,
+                price_min=30000,
+                price_max=30000,
+                source_ids=["src-ticket"],
+            )
+        ]
+
+    places = {
+        place_id: PlaceView(
+            id=place_id,
+            name="岳麓书院",
+            district="岳麓区",
+            claims=(
+                ClaimView(
+                    claim="门票 300 元",
+                    confidence="verified",
+                    source_urls=("https://t.example",),
+                    source_ids=("src-ticket",),
+                ),
+            ),
+        )
+    }
+
+    body = _run_single_plan(
+        session_factory,
+        place_source=place_source,
+        places=places.get,
+        budget_total=50000,
+        people=2,
+        days=1,
+    )
+
+    assert body["state"] == "FAILED"
+    assert body["error_code"] == "BUDGET_EXCEEDED"
+    # 判死就不该再落一份「看起来能用」的行程
+    assert body.get("days_plan") in (None, [])
 
 
 def test_detail_marks_everything_pending_without_catalog(
