@@ -13,6 +13,7 @@ from decimal import Decimal
 import pytest
 from fastapi.testclient import TestClient
 from httpx import Response
+from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
@@ -452,6 +453,36 @@ def test_failed_validation_does_not_write_partial_nodes(
     assert detail.status_code == 200
     assert detail.json()["nodes"] == []
     assert detail.json()["lock_version"] == draft["lock_version"]
+
+
+def test_missing_place_keeps_node_and_counts_cost_unknown(
+    client: TestClient, db_session: Session, user_headers: dict
+) -> None:
+    """地点被删除后：节点不消失、标 place_missing，价格不再算作已知。"""
+    draft = _create_draft(client, user_headers)
+    place_id = _add_place(db_session)
+    filled = _put(
+        client,
+        user_headers,
+        draft["id"],
+        [_node(place_id, price_min=3000, price_max=5000)],
+        if_match=draft["lock_version"],
+    )
+    assert filled.status_code == 200, filled.text
+
+    db_session.execute(delete(Place).where(Place.id == place_id))
+    db_session.commit()
+
+    detail = client.get(f"{API}/{draft['id']}", headers=user_headers)
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert len(body["nodes"]) == 1
+    assert body["nodes"][0]["position"] == 1
+    assert body["nodes"][0]["place"] is None
+    assert body["nodes"][0]["place_missing"] is True
+    assert body["cost"]["unknown_count"] == 1
+    assert body["cost"]["min_total"] == 0
+    assert body["cost"]["max_total"] == 0
 
 
 def test_service_layer_rejects_when_app_error_raised() -> None:
