@@ -570,3 +570,28 @@ def test_unknown_audience_query_is_422(client: TestClient) -> None:
     response = client.get(ROUTES_API, params={"audience": "famliy"})
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "VALIDATION_FAILED"
+
+
+def test_scan_batch_cap_returns_continuation_cursor(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """筛选极严、候选又多时，批次上限不能把剩余结果静默丢掉。"""
+    for index in range(21):
+        _published_route(db_session, title=f"历史路线 {index}", theme_tags=["历史"])
+    monkeypatch.setattr("app.modules.community.service._MAX_SCAN_BATCHES", 1)
+
+    first = client.get(ROUTES_API, params={"theme": "美食", "limit": 1})
+    assert first.status_code == 200, first.text
+    body = first.json()
+    assert body["items"] == []
+    # 第一批 20 条全被筛掉，但还剩候选：必须给继续游标，而不是 None。
+    assert body["next_cursor"] is not None
+
+    second = client.get(
+        ROUTES_API, params={"theme": "美食", "limit": 1, "cursor": body["next_cursor"]}
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["items"] == []
+    assert second.json()["next_cursor"] is None
