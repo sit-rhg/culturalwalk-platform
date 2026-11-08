@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 # 跨模块只借 DTO（社区读路线时要把地点详情与费用摘要原样嵌进响应）：
 # 类型定义留在各自模块，改契约时只改一处，社区不用抄一份字段。
 from app.modules.catalog.schemas import PlaceDetailOut
-from app.modules.routes.schemas import CostSummaryOut
+from app.modules.routes.schemas import Audience, CostSummaryOut
 
 
 class AuthorOut(BaseModel):
@@ -33,6 +33,7 @@ class RouteSummaryOut(BaseModel):
     channel: Literal["official", "user"] = "user"
     author: AuthorOut
     theme_tags: list[str] = Field(default_factory=list)
+    audience: list[Audience] = Field(default_factory=list)
     duration_minutes: int | None = None
     cost: CostSummaryOut
     comment_count: int = 0

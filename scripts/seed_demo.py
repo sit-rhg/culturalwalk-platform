@@ -47,7 +47,7 @@ import json
 import os
 import sys
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, time
 from pathlib import Path
 
@@ -117,11 +117,14 @@ class DemoRoute:
     state: str  # DraftState 的 value；这里用字符串，避免 dataclass 默认值引用 import 顺序
     channel: str  # official=平台精选，user=用户投稿（0011 起落库）
     nodes: tuple[DemoNode, ...]
+    # 适合人群（多选）；默认空表示「未标注」，发现页按 audience 筛选时不会命中。
+    audience: list[str] = field(default_factory=list)
 
 
 DEMO_ROUTES: tuple[DemoRoute, ...] = (
     DemoRoute(
         key="demo-seed-route-a-v1",
+        audience=["family", "student"],
         title="山水洲城：岳麓书院—橘子洲—太平老街",
         summary="从千年学府到湘江洲头，再回到老城街巷，一条线看完长沙的山水与市井。",
         theme_tags=["历史", "自然", "建筑"],
@@ -136,6 +139,7 @@ DEMO_ROUTES: tuple[DemoRoute, ...] = (
     ),
     DemoRoute(
         key="demo-seed-route-b-v1",
+        audience=["student", "solo"],
         title="老城文脉：天心阁—湖南博物院—潮宗街",
         summary="登古城墙、看马王堆，再钻进潮宗街的巷子，一天走完长沙的旧与新。",
         theme_tags=["历史", "建筑", "民俗"],
@@ -150,6 +154,7 @@ DEMO_ROUTES: tuple[DemoRoute, ...] = (
     ),
     DemoRoute(
         key="demo-seed-route-c-v1",
+        audience=["student", "solo"],
         title="马王堆与潮宗街：一天读长沙",
         summary=(
             "上午在湖南省博物馆看马王堆汉墓的素纱襌衣与 T 形帛画，下午钻进潮宗街的麻石巷，"
@@ -172,6 +177,7 @@ DEMO_ROUTES: tuple[DemoRoute, ...] = (
     ),
     DemoRoute(
         key="demo-seed-route-d-v1",
+        audience=["couple", "family"],
         title="登天心阁，望湘江北去",
         summary=(
             "从建在古城墙上的天心阁开始，过江到橘子洲头看“湘江北去”，再回太平老街吃一顿晚饭——"
@@ -189,6 +195,7 @@ DEMO_ROUTES: tuple[DemoRoute, ...] = (
     ),
     DemoRoute(
         key="demo-seed-route-e-v1",
+        audience=["student", "group"],
         title="从博物院到太平老街：文物里的市井",
         summary=(
             "先看湖南省博物馆的马王堆陈列，再坐地铁到太平老街，把汉墓里的器物和街面上的烟火气对上。"
@@ -204,6 +211,7 @@ DEMO_ROUTES: tuple[DemoRoute, ...] = (
     ),
     DemoRoute(
         key="demo-seed-route-f-v1",
+        audience=["couple", "solo"],
         title="湘江夜：橘子洲头与太平街的灯",
         summary="傍晚进橘子洲走到洲头看日落，过江后在太平老街吃夜宵——天黑了才开始的半条路线。",
         theme_tags=["夜景", "江景", "美食"],
@@ -217,6 +225,7 @@ DEMO_ROUTES: tuple[DemoRoute, ...] = (
     ),
     DemoRoute(
         key="demo-seed-route-g-v1",
+        audience=["couple", "group"],
         title="太平街到潮宗街：两条老街的午后",
         summary="在太平老街吃一顿，再沿湘江路走到潮宗街，看麻石路、老教堂和巷子里的新店。",
         theme_tags=["美食", "市井", "民俗"],
@@ -230,6 +239,7 @@ DEMO_ROUTES: tuple[DemoRoute, ...] = (
     ),
     DemoRoute(
         key="demo-seed-route-h-v1",
+        audience=["solo", "couple"],
         title="潮宗街的旧墙与新店",
         summary="两小时走完潮宗街：老教堂、时务学堂旧址在巷子深处，新开的咖啡馆就贴着旧墙。",
         theme_tags=["民俗", "建筑", "市井"],
@@ -243,6 +253,7 @@ DEMO_ROUTES: tuple[DemoRoute, ...] = (
     ),
     DemoRoute(
         key="demo-seed-route-i-v1",
+        audience=["family", "group"],
         title="岳麓山脚的一整天：书院、江洲与日落",
         summary="上午把岳麓书院走完，下午过江去橘子洲，在洲头等日落——一整天都在岳麓区的地界上转。",
         theme_tags=["书院", "自然", "江景"],
@@ -256,6 +267,7 @@ DEMO_ROUTES: tuple[DemoRoute, ...] = (
     ),
     DemoRoute(
         key="demo-seed-route-j-v1",
+        audience=["student", "senior"],
         title="城墙上的近代史：天心阁与潮宗街",
         summary=(
             "从天心阁的古城墙走到潮宗街的时务学堂旧址，再拐进太平老街——长沙的近代化就在这几条巷子里。"
@@ -277,6 +289,7 @@ DEMO_ROUTES: tuple[DemoRoute, ...] = (
     ),
     DemoRoute(
         key="demo-seed-route-pending-v1",
+        audience=["senior", "group"],
         title="老城漫步：太平老街—潮宗街—天心阁",
         summary="待审核示例：三个老城点位串联，用于演示审核队列里的待审草稿。",
         theme_tags=["历史", "民俗", "美食"],
@@ -605,6 +618,7 @@ def _ensure_route(session, editor: User, spec: DemoRoute) -> dict[str, object]:
             summary=spec.summary,
             theme_tags=spec.theme_tags,
             duration_minutes=spec.duration_minutes,
+            audience=list(spec.audience),
         ),
         idempotency_key=spec.key,
     )
@@ -615,6 +629,9 @@ def _ensure_route(session, editor: User, spec: DemoRoute) -> dict[str, object]:
         session.flush()
 
     # 同 key 重放时 replace_nodes 会在写库前直接返回，所以这里第二遍也是安全的。
+    if list(draft.audience or []) != spec.audience:
+        draft.audience = list(spec.audience)
+        session.flush()
     service.replace_nodes(
         draft_id=draft.id,
         owner_id=editor.id,

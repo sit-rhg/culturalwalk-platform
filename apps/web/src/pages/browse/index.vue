@@ -7,6 +7,7 @@ import Skeleton from '@/shared/ui/Skeleton.vue'
 import EmptyState from '@/shared/ui/EmptyState.vue'
 import RouteCard from '@/modules/route-card/index.vue'
 import {
+  AUDIENCE_OPTIONS,
   CHANNEL_OPTIONS,
   DURATION_OPTIONS,
   EMPTY_FILTERS,
@@ -173,6 +174,14 @@ onBeforeUnmount(stopSearchTimer)
           <span class="label">来源</span>
           <select v-model="filters.channel" class="select">
             <option v-for="option in CHANNEL_OPTIONS" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="label">适合人群</span>
+          <select v-model="filters.audience" class="select">
+            <option v-for="option in AUDIENCE_OPTIONS" :key="option.value" :value="option.value">
               {{ option.label }}
             </option>
           </select>

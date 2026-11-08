@@ -6,6 +6,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import type { Schemas } from '@/api/types'
 import { ApiError, api } from '@/shared/api'
+import { AUDIENCE_OPTIONS } from '@/shared/audience'
 import { draftStateLabel, shortDate, transportLabel } from '@/shared/format'
 import { isLoggedIn } from '@/shared/session'
 import EmptyState from '@/shared/ui/EmptyState.vue'
@@ -50,7 +51,7 @@ const savedSnapshot = ref('')
 const createOpen = ref(false)
 const creating = ref(false)
 const createError = ref('')
-const createForm = reactive({ title: '', summary: '' })
+const createForm = reactive({ title: '', summary: '', audience: [] as string[] })
 
 const addOpen = ref(false)
 const addError = ref('')
@@ -142,6 +143,13 @@ function closeCreate(): void {
   createError.value = ''
   createForm.title = ''
   createForm.summary = ''
+  createForm.audience = []
+}
+
+function toggleCreateAudience(value: string): void {
+  const index = createForm.audience.indexOf(value)
+  if (index >= 0) createForm.audience.splice(index, 1)
+  else createForm.audience.push(value)
 }
 
 async function createDraft(): Promise<void> {
@@ -156,6 +164,7 @@ async function createDraft(): Promise<void> {
     const created = await api.post<Draft>('/route-drafts', {
       title,
       summary: createForm.summary.trim(),
+      audience: [...createForm.audience],
     })
     closeCreate()
     await loadDrafts()
@@ -319,6 +328,21 @@ watch(
             rows="2"
             placeholder="一句话说清这条线讲什么"
           />
+        </div>
+        <div class="field">
+          <span class="label">适合人群（可多选，选填）</span>
+          <div class="chips">
+            <button
+              v-for="option in AUDIENCE_OPTIONS"
+              :key="option.value"
+              type="button"
+              class="chip"
+              :class="{ active: createForm.audience.includes(option.value) }"
+              @click="toggleCreateAudience(option.value)"
+            >
+              {{ option.label }}
+            </button>
+          </div>
         </div>
         <p v-if="createError" class="error-text">{{ createError }}</p>
         <div class="row">

@@ -57,11 +57,13 @@ def _snapshot(
     place_id: uuid.UUID | None,
     price_min: int | None,
     price_max: int | None,
+    audience: list[str] | None = None,
 ) -> dict:
     return {
         "title": title,
         "summary": "从东方红广场上山",
         "theme_tags": theme_tags,
+        "audience": audience or [],
         "duration_minutes": duration_minutes,
         "nodes": [
             {
@@ -88,6 +90,7 @@ def _published_route(
     place_id: uuid.UUID | None = None,
     price_min: int | None = 1000,
     price_max: int | None = 2000,
+    audience: list[str] | None = None,
 ) -> uuid.UUID:
     """造一条「已发布」路线：版本 + 一条 PUBLISHED 发布记录（真实发布流程的形状）。"""
     tags = theme_tags or ["历史"]
@@ -112,6 +115,7 @@ def _published_route(
             place_id=place_id,
             price_min=price_min,
             price_max=price_max,
+            audience=audience,
         ),
         content_hash="a" * 64,
         created_by=author_id,
@@ -504,3 +508,26 @@ def test_route_detail_published_at_comes_from_publication(
 
     assert response.status_code == 200, response.text
     assert datetime.fromisoformat(response.json()["published_at"]) == published_at
+
+
+def test_list_filters_by_audience(client: TestClient, db_session: Session) -> None:
+    """多选标签按「包含」筛选：路线标了 family+solo，两类人群都能搜到。"""
+    family_route = _published_route(db_session, title="亲子路线", audience=["family", "solo"])
+    _published_route(db_session, title="只在夜里", audience=["couple"])
+
+    hit = client.get(ROUTES_API, params={"audience": "family"})
+    assert hit.status_code == 200, hit.text
+    assert [item["id"] for item in hit.json()["items"]] == [str(family_route)]
+    assert hit.json()["items"][0]["audience"] == ["family", "solo"]
+
+    second_label = client.get(ROUTES_API, params={"audience": "solo"})
+    assert [item["id"] for item in second_label.json()["items"]] == [str(family_route)]
+
+    miss = client.get(ROUTES_API, params={"audience": "senior"})
+    assert miss.json()["items"] == []
+
+
+def test_unknown_audience_query_is_422(client: TestClient) -> None:
+    response = client.get(ROUTES_API, params={"audience": "famliy"})
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_FAILED"

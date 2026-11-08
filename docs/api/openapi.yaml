@@ -579,6 +579,10 @@ paths:
         - name: theme
           in: query
           schema: { type: string }
+        - name: audience
+          in: query
+          description: 适合人群，命中路线 audience 里包含该值即可
+          schema: { $ref: "#/components/schemas/Audience" }
         - name: duration
           in: query
           description: 例如 0-120 / 120-240
@@ -1178,6 +1182,11 @@ components:
           type: array
           items: { type: string, format: uuid }
 
+    Audience:
+      type: string
+      description: 适合人群的取值。family=亲子 student=学生 couple=情侣 senior=长者 solo=独自 group=团体
+      enum: [family, student, couple, senior, solo, group]
+
     RouteDraftCreate:
       type: object
       required: [title]
@@ -1188,6 +1197,10 @@ components:
           type: array
           items: { type: string }
         duration_minutes: { type: integer }
+        audience:
+          type: array
+          description: 适合人群（多选），发现页可作为筛选条件
+          items: { $ref: "#/components/schemas/Audience" }
 
     RouteDraftPatch:
       type: object
@@ -1198,6 +1211,9 @@ components:
           type: array
           items: { type: string }
         duration_minutes: { type: integer }
+        audience:
+          type: array
+          items: { $ref: "#/components/schemas/Audience" }
 
     RouteDraft:
       type: object
@@ -1207,6 +1223,9 @@ components:
         route_id: { type: string, format: uuid }
         title: { type: string }
         summary: { type: [string, "null"] }
+        audience:
+          type: array
+          items: { $ref: "#/components/schemas/Audience" }
         state: { type: string, enum: [EDITING, SUBMITTED_LOCKED, APPROVED_LOCKED, ARCHIVED] }
         lock_version: { type: integer }
         base_version_id: { type: [string, "null"], format: uuid }
@@ -1257,6 +1276,10 @@ components:
         theme_tags:
           type: array
           items: { type: string }
+        audience:
+          type: array
+          description: 适合人群（多选）
+          items: { $ref: "#/components/schemas/Audience" }
         duration_minutes: { type: [integer, "null"] }
         cost: { $ref: "#/components/schemas/CostSummary" }
         comment_count: { type: integer }

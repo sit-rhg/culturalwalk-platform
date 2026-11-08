@@ -93,6 +93,15 @@ class RouteDraft(Base):
         JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list
     )
     duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 适合人群（多选标签）。和 theme_tags 一样用 JSON 数组存：筛选只做「包含」判断，
+    # 没有按受众反查路线的需求，不值得为它加一张关联表。
+    # server_default 必须与 0015_route_audience 迁移一致，否则 alembic check 会报漂移。
+    audience: Mapped[list[str]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"),
+        nullable=False,
+        default=list,
+        server_default=text("'[]'"),
+    )
     # 来源通道：official=平台精选（编辑自建），user=用户投稿。
     # 发现页的「来源」筛选直接读这一列，不再靠作者身份猜。
     # server_default 必须与 0011_route_channel 迁移一致，否则 alembic check 会报漂移。
@@ -139,6 +148,21 @@ class TransportMode(StrEnum):
     BUS = "bus"
     TAXI = "taxi"
     BIKE = "bike"
+
+
+class Audience(StrEnum):
+    """适合人群，取值与 openapi 的 Audience 一致。
+
+    前端把它翻成中文标签展示；落库与前后端传输一律用这里的 value，
+    免得「亲子」「family」两种写法各存一半，筛选时互相漏掉。
+    """
+
+    FAMILY = "family"
+    STUDENT = "student"
+    COUPLE = "couple"
+    SENIOR = "senior"
+    SOLO = "solo"
+    GROUP = "group"
 
 
 class RouteNode(Base):
