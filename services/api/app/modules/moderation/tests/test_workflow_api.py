@@ -409,6 +409,33 @@ def test_withdraw_rejected_while_task_claimed(
     assert _code(response) == "REVIEW_TASK_CLAIMED"
 
 
+def test_withdraw_replay_old_key_does_not_touch_resubmitted(
+    client: TestClient,
+    user_headers: dict[str, str],
+) -> None:
+    """B6：撤回后重投，再重试旧 key 只回放原撤回，新投稿仍是 PENDING_REVIEW。"""
+    draft_id = _create_draft(client, user_headers, title="撤回后重投")
+    _submit(client, user_headers, draft_id)
+    old_key = _new_key()
+    first = client.post(
+        f"{API}/route-drafts/{draft_id}/withdraw",
+        headers={**user_headers, "Idempotency-Key": old_key},
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["state"] == "EDITING"
+
+    second = _submit(client, user_headers, draft_id)
+
+    retry = client.post(
+        f"{API}/route-drafts/{draft_id}/withdraw",
+        headers={**user_headers, "Idempotency-Key": old_key},
+    )
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["state"] == "SUBMITTED_LOCKED"
+    detail = client.get(f"{API}/submissions/{second['id']}", headers=user_headers)
+    assert detail.json()["state"] == "PENDING_REVIEW"
+
+
 def test_release_then_author_can_withdraw(
     client: TestClient,
     db_session: Session,
