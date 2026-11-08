@@ -31,9 +31,16 @@ SKIP_SUFFIXES = {".pyc", ".pyo"}
 
 
 def _find_pnpm() -> list[str]:
-    """返回执行 pnpm 的命令前缀（本机没装 pnpm 时用 node 跑它的 cjs）。"""
+    """返回执行 pnpm 的命令前缀。
+
+    Windows 上 shutil.which("pnpm") 拿到的是 pnpm.CMD —— 直接当可执行文件起会报
+    WinError 193，必须经 cmd.exe 解释一层（GitHub Actions 的 windows-latest 就是
+    这个情况）。本机没装 pnpm 时退回「node + pnpm.cjs」。
+    """
     direct = shutil.which("pnpm")
     if direct:
+        if sys.platform == "win32" and Path(direct).suffix.lower() in {".cmd", ".bat"}:
+            return ["cmd", "/c", "pnpm"]
         return [direct]
     node = shutil.which("node")
     candidates = [
@@ -49,14 +56,27 @@ def _find_pnpm() -> list[str]:
     )
 
 
+def _run(command: list[str], cwd: Path) -> None:
+    """跑外部命令：失败时把输出打出来，别只留一个 CalledProcessError。"""
+    print(f"[run] {' '.join(command)}  (cwd={cwd})")
+    # 子进程输出不一定是本地代码页（pnpm/vite 走 UTF-8），显式按 UTF-8 解，
+    # 否则 Windows 中文环境下 text=True 会直接抛 UnicodeDecodeError。
+    finished = subprocess.run(
+        command, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace"
+    )
+    if finished.stdout:
+        print(finished.stdout)
+    if finished.returncode != 0:
+        print(finished.stderr)
+        raise SystemExit(f"命令失败（exit {finished.returncode}）：{' '.join(command)}")
+
+
 def _build_web(skip: bool) -> None:
     index = WEB_ROOT / "dist" / "index.html"
     if skip and index.is_file():
         print(f"[web] 复用已有构建产物：{index}")
         return
-    command = [*_find_pnpm(), "build"]
-    print(f"[web] {' '.join(command)}")
-    subprocess.run(command, cwd=WEB_ROOT, check=True)
+    _run([*_find_pnpm(), "build"], WEB_ROOT)
 
 
 def _install_deps(python: str, target: Path) -> None:
@@ -73,8 +93,7 @@ def _install_deps(python: str, target: Path) -> None:
         str(target),
         ".",
     ]
-    print(f"[deps] {' '.join(command)}")
-    subprocess.run(command, cwd=API_ROOT, check=True)
+    _run(command, API_ROOT)
     # pip 会把 app 自己也装进 target（setuptools 找到的就是它）；留着会与根目录
     # 的 app/ 争 sys.path 顺序，删掉，统一用仓库里那份源码。
     installed_app = target / "app"
