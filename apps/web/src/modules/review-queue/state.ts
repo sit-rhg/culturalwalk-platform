@@ -24,6 +24,28 @@ export function isPendingTask(task: ReviewTask): boolean {
   return task.state === 'OPEN' || task.state === 'CLAIMED'
 }
 
+/**
+ * 只有「审核中」的任务能裁决：OPEN 没领取会 409 TASK_NOT_CLAIMED，
+ * COMPLETED 已处理会 409 TASK_ALREADY_FINISHED。按钮不要在这种任务上出现。
+ */
+export function canDecide(task: ReviewTask | null | undefined): boolean {
+  return task?.state === 'CLAIMED'
+}
+
+/**
+ * 审核通过之后还要「发布」才会出现在发现页，这里给出入口。
+ * publishedSubmissionIds 由页面在发布成功后追加：已经发过的再点必 409
+ * ROUTE_ALREADY_PUBLISHED，按钮必须消失。
+ */
+export function canPublish(
+  task: ReviewTask,
+  publishedSubmissionIds: readonly string[] = [],
+): boolean {
+  if (task.state !== 'COMPLETED' || task.completed_action !== 'approve') return false
+  const submissionId = task.submission_id
+  return !submissionId || !publishedSubmissionIds.includes(submissionId)
+}
+
 /** 后端 DecisionRequest.reason 的 min_length，前端先拦，省掉一次 422。 */
 export const MIN_REASON_LENGTH = 10
 

@@ -7,7 +7,7 @@ import { computed, reactive } from 'vue'
 
 import type { Schemas } from '@/api/types'
 
-import { api, setToken } from './api'
+import { ApiError, SESSION_EXPIRED_EVENT, api, setToken } from './api'
 import { readItem, removeItem, writeItem } from './storage'
 
 type User = Schemas['User']
@@ -59,18 +59,29 @@ export async function logout(): Promise<void> {
   persist(null)
 }
 
-/** 用 token 换最新用户信息；token 失效时清空登录态。 */
+/** 用 token 换最新用户信息；服务端判定 token 失效时才清空登录态。 */
 export async function refreshMe(): Promise<User | null> {
   if (!readItem('cw_user')) return null
   try {
     const me = await api.get<User>('/users/me')
     persist(me)
     return me
-  } catch {
-    setToken(null)
-    persist(null)
+  } catch (error) {
+    // 网络抖动 / 5xx 不代表登录失效：保留 cw_user，下次进页面再试。
+    // 只有 401/403 才清，否则用户在弱网下会被无声登出。
+    if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+      setToken(null)
+      removeItem(REFRESH_KEY)
+      persist(null)
+    }
     return null
   }
+}
+
+// api 层刷新令牌失败时广播；这里把 cw_user 一起清掉，
+// 否则 isLoggedIn/isAdmin 还停在 true，页面继续渲染登录态并反复 401。
+if (typeof window !== 'undefined') {
+  window.addEventListener(SESSION_EXPIRED_EVENT, () => persist(null))
 }
 
 export const currentUser = computed(() => state.user)

@@ -41,8 +41,12 @@ export function demoAccounts(useMock: boolean): DemoAccount[] {
   return useMock ? DEMO_ACCOUNTS : SEEDED_ACCOUNTS
 }
 
+/** 登录只做友好提示：后端 LoginIn 不校验长度（历史账号可能只有 2 个字）。 */
 export const MIN_USERNAME_LENGTH = 2
 export const MIN_PASSWORD_LENGTH = 6
+/** 注册必须与契约对齐：identity/schemas.py RegisterIn 是 username≥3、password≥8。 */
+export const MIN_REGISTER_USERNAME_LENGTH = 3
+export const MIN_REGISTER_PASSWORD_LENGTH = 8
 
 /** 用户名前后空格不算字数，密码按原样算长度。 */
 export function validateLogin(form: AuthForm): FieldProblem | null {
@@ -56,8 +60,14 @@ export function validateLogin(form: AuthForm): FieldProblem | null {
 }
 
 export function validateRegister(form: AuthForm): FieldProblem | null {
-  const base = validateLogin(form)
-  if (base) return base
+  // 不能复用 validateLogin：注册的下限比登录严，复用会让 2 字用户名/6 位密码
+  // 一路放行到 POST /auth/register，被后端 422 打回来。
+  if (form.username.trim().length < MIN_REGISTER_USERNAME_LENGTH) {
+    return { field: 'username', message: `用户名至少 ${MIN_REGISTER_USERNAME_LENGTH} 个字` }
+  }
+  if (form.password.length < MIN_REGISTER_PASSWORD_LENGTH) {
+    return { field: 'password', message: `密码至少 ${MIN_REGISTER_PASSWORD_LENGTH} 位` }
+  }
   if (form.password !== (form.confirm ?? '')) {
     return { field: 'confirm', message: '两次输入的密码不一致' }
   }

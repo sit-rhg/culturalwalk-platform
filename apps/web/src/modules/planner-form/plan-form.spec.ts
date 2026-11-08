@@ -30,10 +30,10 @@ describe('validatePlanForm', () => {
     expect(validatePlanForm(form({ days: 7 }))).toBe('')
   })
 
-  it('人数限制 1-10 且必须是整数', () => {
-    expect(validatePlanForm(form({ people: 0 }))).toBe('人数需要在 1-10 之间')
-    expect(validatePlanForm(form({ people: 11 }))).toBe('人数需要在 1-10 之间')
-    expect(validatePlanForm(form({ people: 10 }))).toBe('')
+  it('人数限制 1-12 且必须是整数', () => {
+    expect(validatePlanForm(form({ people: 0 }))).toBe('人数需要在 1-12 之间')
+    expect(validatePlanForm(form({ people: 13 }))).toBe('人数需要在 1-12 之间')
+    expect(validatePlanForm(form({ people: 12 }))).toBe('')
   })
 
   it('没选城市要拦住', () => {

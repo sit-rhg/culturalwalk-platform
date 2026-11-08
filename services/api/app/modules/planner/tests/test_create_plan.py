@@ -144,6 +144,26 @@ def test_只传必填字段也能过(client: TestClient, auth: tuple[dict[str, s
     assert response.json()["state"] == "GENERATING"
 
 
+def test_出发地只填地名也能提交(
+    client: TestClient, auth: tuple[dict[str, str], str], session_factory: sessionmaker[Session]
+) -> None:
+    """契约里 start_point 的三个字段都不是必填：前端只让填地名时不发坐标。
+
+    以前 StartPoint 强制 lat/lon，用户一填出发地就 422——这比不支持出发地还糟。
+    """
+    headers, _ = auth
+    response = client.post(API, json=_payload(start_point={"label": "五一广场"}), headers=headers)
+
+    assert response.status_code == 202
+    with session_factory() as db:
+        itinerary = db.scalars(select(Itinerary)).one()
+    assert itinerary.preferences["start_point"] == {
+        "lat": None,
+        "lon": None,
+        "label": "五一广场",
+    }
+
+
 def test_缺天数返回422并指明字段(client: TestClient, auth: tuple[dict[str, str], str]) -> None:
     """卡片的验收标准：缺天数返回 422 且指明缺哪个字段。"""
     headers, _ = auth

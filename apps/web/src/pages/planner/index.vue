@@ -51,6 +51,9 @@ const draftId = ref('')
 const draftTitle = ref('')
 
 let stepTimer: ReturnType<typeof setInterval> | null = null
+/** 轮询等待的定时器；离页要清掉，否则最多还会再发 20 次 GET */
+let pollTimer: ReturnType<typeof setTimeout> | null = null
+let pageClosed = false
 
 const visibleSteps = computed(() =>
   PLAN_STEPS.slice(0, revealed.value).map((step, index) => ({
@@ -106,7 +109,10 @@ function seconds(durationMs: number | null | undefined): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
-    setTimeout(resolve, ms)
+    pollTimer = setTimeout(() => {
+      pollTimer = null
+      resolve()
+    }, ms)
   })
 }
 
@@ -116,9 +122,12 @@ async function waitUntilReady(created: PlanDetail): Promise<PlanDetail> {
   for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt += 1) {
     if (current.state === 'READY' || current.state === 'FAILED') return current
     await sleep(POLL_INTERVAL_MS)
+    if (pageClosed) throw new ApiError(0, 'PLAN_ABORTED', '页面已离开，不再等待结果')
     current = await api.get<PlanDetail>(`/plans/${created.id}`)
   }
-  return current
+  // 超时不能把还在 GENERATING 的响应当结果返回：days_plan 还是空的，
+  // 页面会显示「这次没有排出日程」，让人误以为是条件太窄而不是还没生成完。
+  throw new ApiError(504, 'PLAN_TIMEOUT', '生成超时，请稍后重试')
 }
 
 /** mock 不到 1 秒就返回，四步进度会一闪而过；至少让四步都露个面再切结果 */
@@ -195,7 +204,14 @@ function backToForm(): void {
   phase.value = 'form'
 }
 
-onBeforeUnmount(stopSteps)
+onBeforeUnmount(() => {
+  pageClosed = true
+  stopSteps()
+  if (pollTimer !== null) {
+    clearTimeout(pollTimer)
+    pollTimer = null
+  }
+})
 </script>
 
 <template>

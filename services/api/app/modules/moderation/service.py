@@ -34,6 +34,7 @@ from app.core.errors import (
     NotFound,
     PreconditionFailed,
     Unauthorized,
+    ValidationFailed,
 )
 from app.core.pagination import decode_cursor, encode_cursor
 from app.modules.audit.service import AuditService
@@ -54,6 +55,12 @@ from app.modules.moderation.schemas import (
     PublishRequest,
     SubmitRequest,
     UnpublishRequest,
+)
+from app.modules.notifications.service import (
+    REVIEW_APPROVED,
+    REVIEW_REJECTED,
+    REVIEW_REQUEST_CHANGES,
+    NotificationsService,
 )
 from app.modules.routes.models import DraftState, RouteDraft, RouteVersion
 from app.modules.routes.service import RoutesService
@@ -404,6 +411,16 @@ class ModerationService:
         if submission.state is not SubmissionState.PENDING_REVIEW:
             raise Conflict("投稿当前不在待审核状态", code="SUBMISSION_NOT_PENDING")
 
+        # 退回/拒绝必须写理由（验收条件：退回通知带理由）。校验放在 CAS 之前：
+        # 否则任务先被标成 COMPLETED，再因为缺理由报 422，用户重试只会看到「任务已结束」。
+        reason = (payload.reason or "").strip()
+        if payload.action is not ReviewDecision.APPROVE and not reason:
+            raise ValidationFailed(
+                "退回或拒绝必须写明理由",
+                code="REVIEW_REASON_REQUIRED",
+                details=[{"field": "reason", "message": "退回必须带理由"}],
+            )
+
         now = _now()
         rowcount = self.repo.complete_cas(
             task_id=task.id,
@@ -448,7 +465,7 @@ class ModerationService:
                 task_id=task.id,
                 actor_id=reviewer_id,
                 action=decision.value,
-                reason=payload.reason,
+                reason=reason or None,
             )
         )
         self.audit.write(
@@ -459,12 +476,44 @@ class ModerationService:
             actor_username=reviewer.username,
             before_hash=submission.content_hash,
             after_hash=submission.content_hash,
-            reason=payload.reason,
+            reason=reason or None,
             request_id=request_id,
         )
+        self._notify_author(submission=submission, draft=draft, decision=decision, reason=reason)
         self.db.refresh(task)
         self.db.flush()
         return task
+
+    def _notify_author(
+        self,
+        *,
+        submission: Submission,
+        draft: RouteDraft,
+        decision: ReviewDecision,
+        reason: str,
+    ) -> None:
+        """审核结果写站内通知。退回/拒绝必须带理由，notify() 会再校验一次。
+
+        与裁决同一个事务：这里失败（例如退回没带理由）会让整次裁决回滚，
+        所以理由校验必须跑在 complete_cas 之前，不能只靠 notify() 兜底。
+        """
+        route_id = submission.route_id or draft.route_id
+        payload: dict[str, Any] = {
+            "submission_id": str(submission.id),
+            "title": draft.title,
+            "decision": decision.value,
+        }
+        if route_id is not None:
+            payload["route_id"] = str(route_id)
+        if decision is ReviewDecision.APPROVE:
+            notif_type = REVIEW_APPROVED
+        elif decision is ReviewDecision.REQUEST_CHANGES:
+            notif_type = REVIEW_REQUEST_CHANGES
+            payload["reason"] = reason
+        else:
+            notif_type = REVIEW_REJECTED
+            payload["reason"] = reason
+        NotificationsService(self.db).notify(submission.submitted_by, notif_type, payload)
 
     # ===== 投稿详情 =====
     def submission_detail(

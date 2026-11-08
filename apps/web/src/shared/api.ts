@@ -57,6 +57,19 @@ export function clearSessionTokens(): void {
   removeItem(REFRESH_KEY)
 }
 
+/**
+ * 登录态被服务端判定失效时广播：session.ts 收到后把 cw_user 一起清掉。
+ * 这里不直接 import session，避免 api ↔ session 循环依赖；页面想跳登录页也监听这个事件。
+ */
+export const SESSION_EXPIRED_EVENT = 'cw:session-expired'
+
+function expireSession(): void {
+  clearSessionTokens()
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT))
+  }
+}
+
 interface RequestOptions extends RequestInit {
   /** 写操作默认带 Idempotency-Key；只读或后端没要求的请求可以关掉 */
   idempotent?: boolean
@@ -95,12 +108,14 @@ async function parseBody<T>(res: Response): Promise<T> {
   }
 
   if (!res.ok) {
-    const err = data as ApiErrorBody | null
+    // FastAPI 自己的错误体是 {"detail": "Not Found"}，没有 error 信封；
+    // 直接取 err.error.code 会抛 TypeError，把真正的状态码埋掉。
+    const envelope = (data as ApiErrorBody | null)?.error
     throw new ApiError(
       res.status,
-      err?.error.code ?? 'UNKNOWN',
-      err?.error.message ?? `请求失败（${res.status}）`,
-      err?.error.request_id,
+      envelope?.code ?? 'UNKNOWN',
+      envelope?.message ?? `请求失败（${res.status}）`,
+      envelope?.request_id,
     )
   }
   return data as T
@@ -129,6 +144,7 @@ async function refreshAccessToken(): Promise<string> {
   if (refreshing) return refreshing
   const refreshToken = readItem(REFRESH_KEY)
   if (!refreshToken) {
+    expireSession()
     throw new ApiError(401, 'UNAUTHORIZED', '登录已失效，请重新登录')
   }
 
@@ -152,7 +168,9 @@ async function refreshAccessToken(): Promise<string> {
     }
 
     if (!res.ok || !data?.access_token) {
-      clearSessionTokens()
+      // 只有服务端明确拒绝（401/403）才清登录态：5xx 或网关错误时保留凭证，
+      // 否则一次网络抖动就把用户踢下线。
+      if (res.status === 401 || res.status === 403) expireSession()
       throw new ApiError(
         res.status,
         data?.error?.code ?? 'UNAUTHORIZED',
@@ -194,8 +212,11 @@ export async function request<T>(path: string, init: RequestOptions = {}): Promi
   try {
     return await send<T>(path, init, accessToken)
   } catch (error) {
+    // 登录/注册/刷新自己返回的 401 是业务结果（密码错、刷新令牌过期），
+    // 不能再拿去换令牌：否则 INVALID_CREDENTIALS 会被换成「登录已失效」。
+    const isAuthEntry = path.startsWith('/auth/')
     const expired = error instanceof ApiError && error.status === 401
-    if (!expired) throw error
+    if (!expired || isAuthEntry) throw error
     const fresh = await refreshAccessToken()
     return send<T>(path, init, fresh)
   }

@@ -4,7 +4,7 @@
 import type { Schemas } from '@/api/types'
 import { relativeTime, reviewActionLabel } from '@/shared/format'
 
-import { reviewTaskStateLabel } from './state'
+import { canPublish, reviewTaskStateLabel } from './state'
 
 const props = defineProps<{
   tasks: Schemas['ReviewTask'][]
@@ -12,6 +12,8 @@ const props = defineProps<{
   busyId?: string | null
   /** task.id → 「路线标题 · 作者」；调用方补齐，缺了就退回显示任务号 */
   labels?: Record<string, string>
+  /** 已经发布成功的 submission_id：这些任务的「发布上线」按钮不再出现 */
+  publishedSubmissionIds?: string[]
 }>()
 
 /** 列表第一行优先显示人能读的标题，拿不到才退回任务号 */
@@ -35,8 +37,8 @@ function onClaim(task: Schemas['ReviewTask']): void {
 }
 
 /** 审核通过之后还要「发布」才会出现在发现页，这里给出入口 */
-function canPublish(task: Schemas['ReviewTask']): boolean {
-  return task.state === 'COMPLETED' && task.completed_action === 'approve'
+function canPublishTask(task: Schemas['ReviewTask']): boolean {
+  return canPublish(task, props.publishedSubmissionIds ?? [])
 }
 
 function onPublish(task: Schemas['ReviewTask']): void {
@@ -75,7 +77,7 @@ function onPublish(task: Schemas['ReviewTask']): void {
           {{ busyId === task.id ? '领取中…' : '领取' }}
         </button>
         <button
-          v-if="canPublish(task)"
+          v-if="canPublishTask(task)"
           class="btn small"
           type="button"
           :disabled="busyId === task.id"

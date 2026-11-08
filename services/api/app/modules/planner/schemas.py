@@ -41,12 +41,16 @@ class Pace(StrEnum):
 
 
 class StartPoint(BaseModel):
-    """出发地。坐标用 WGS84，和契约里的 lat/lon 一致。"""
+    """出发地。坐标用 WGS84，和契约里的 lat/lon 一致。
+
+    契约（openapi PlanInput.start_point）没把 lat/lon 标 required：前端只让用户
+    填地名时没有坐标。这里必须同样可选，否则一填出发地就 422。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    lat: float = Field(ge=-90, le=90)
-    lon: float = Field(ge=-180, le=180)
+    lat: float | None = Field(default=None, ge=-90, le=90)
+    lon: float | None = Field(default=None, ge=-180, le=180)
     label: str | None = Field(default=None, max_length=128)
 
 
