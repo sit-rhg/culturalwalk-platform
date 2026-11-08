@@ -60,7 +60,15 @@ def claim_and_run(
     # 先把「我领到了」提交掉：接下来是十几秒的模型调用，
     # 不能让它一直锁着这一行，否则别的 worker 只能干等。
     db.commit()
-    service.execute_job(job, place_source=place_source)
+    job_id = job.id
+    try:
+        service.execute_job(job, place_source=place_source)
+    except Exception as exc:  # noqa: BLE001 - 一条任务炸掉不能带走整个 worker
+        logger.exception("任务 %s 执行时抛出未处理异常", job_id)
+        # 异常可能留下半截写入，先回滚再按 id 重取任务记账；
+        # 不回滚的话这条连接上的后续查询全废，worker 会被一条坏任务拖死。
+        db.rollback()
+        service.record_crashed_job(job_id, error=f"{type(exc).__name__}: {exc}")
     db.commit()
     return True
 
@@ -94,7 +102,13 @@ def main(argv: list[str] | None = None) -> int:
     logger.info("worker 启动：%s，轮询间隔 %.1fs", worker_name(), args.interval)
     try:
         while True:
-            if not run_once():
+            try:
+                ran = run_once()
+            except Exception:  # noqa: BLE001 - 单轮失败（含数据库抖动）不该让常驻进程退出
+                logger.exception("本轮任务执行失败，稍后继续轮询")
+                time.sleep(args.interval)
+                continue
+            if not ran:
                 time.sleep(args.interval)
     except KeyboardInterrupt:
         logger.info("worker 收到中断，退出")

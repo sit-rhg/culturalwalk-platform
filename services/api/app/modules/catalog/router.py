@@ -68,7 +68,9 @@ def create_place(
     request: Request,
     idempotency_key: IdempotencyKey,
 ) -> PlaceOut:
-    place = CatalogService(db).create_place(payload, actor=user, request_id=_request_id(request))
+    place = CatalogService(db).create_place(
+        payload, actor=user, request_id=_request_id(request), idempotency_key=idempotency_key
+    )
     return PlaceOut.model_validate(place)
 
 
@@ -93,5 +95,9 @@ def create_place_fact(
     idempotency_key: IdempotencyKey,
 ) -> PlaceFactOut:
     return CatalogService(db).add_fact(
-        place_id, payload, actor=user, request_id=_request_id(request)
+        place_id,
+        payload,
+        actor=user,
+        request_id=_request_id(request),
+        idempotency_key=idempotency_key,
     )

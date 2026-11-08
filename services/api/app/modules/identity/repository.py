@@ -45,6 +45,11 @@ class IdentityRepository:
         stmt = select(User).where(func.lower(User.username) == username.lower())
         return self.db.scalar(stmt)
 
+    def get_user_by_email(self, email: str) -> User | None:
+        """按小写比较，命中 uq_users_email_lower；邮箱重复要和用户名重复分开报。"""
+        stmt = select(User).where(func.lower(User.email) == email.lower())
+        return self.db.scalar(stmt)
+
     def get_user(self, user_id: uuid.UUID) -> User | None:
         return self.db.get(User, user_id)
 

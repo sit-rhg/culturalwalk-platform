@@ -655,7 +655,42 @@ class PlannerService:
     # ----- 后台任务（PL-05） -------------------------------------------------
 
     def recover_expired_leases(self, *, now: datetime | None = None) -> int:
-        return self.repo.recover_expired_leases(now=now or datetime.now(UTC))
+        moment = now or datetime.now(UTC)
+        failed = self.repo.recover_expired_leases(now=moment, max_attempts=MAX_JOB_ATTEMPTS)
+        for job in failed:
+            # 任务已经判死，行程也得收尾：否则用户看到的是永远转圈的 GENERATING。
+            self._fail_plan_of_job(job, error_code=AGENT_FAILED_CODE)
+        return len(failed)
+
+    def _fail_plan_of_job(self, job: PlanJob, *, error_code: str) -> None:
+        itinerary = self.repo.get_itinerary(job.itinerary_id)
+        run = self.db.get(PlanRun, job.run_id)
+        if itinerary is None or run is None:
+            return
+        # 只在生成中收尾：已经 READY/FAILED 的记录不该被一条迟到的事故改回去。
+        if run.state is PlanState.GENERATING and itinerary.state is PlanState.GENERATING:
+            self.finish_failed(itinerary, run, error_code=error_code)
+
+    def record_crashed_job(self, job_id: uuid.UUID, *, error: str) -> None:
+        """执行过程中抛出未处理异常时给任务收尾（worker 捕获后调用）。
+
+        调用方必须先 rollback：异常可能留下半截写入，这里按 id 重新加载任务，
+        不能复用调用方手里那个已经失效的实例。回滚也会清掉这次执行的半截步骤，
+        下一次重领会从头重跑。
+        """
+        job = self.repo.get_job(job_id)
+        if job is None:
+            return
+        job.last_error = error[:ERROR_PREVIEW_CHARS]
+        job.lease_until = None
+        if job.attempts >= MAX_JOB_ATTEMPTS:
+            job.state = JobState.FAILED
+            self._fail_plan_of_job(job, error_code=AGENT_FAILED_CODE)
+            logger.error("任务 %s 连续 %s 次异常退出，已放弃", job_id, job.attempts)
+            return
+        backoff = JOB_BACKOFF_SECONDS[min(job.attempts - 1, len(JOB_BACKOFF_SECONDS) - 1)]
+        job.state = JobState.PENDING
+        job.available_at = datetime.now(UTC) + timedelta(seconds=backoff)
 
     def claim_job(self, *, worker: str, now: datetime | None = None) -> PlanJob | None:
         """领一条任务并标成 RUNNING（不含执行）。

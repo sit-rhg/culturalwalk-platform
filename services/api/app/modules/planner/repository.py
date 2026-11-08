@@ -4,9 +4,9 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import and_, delete, or_, select, update
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.modules.planner.models import (
@@ -201,25 +201,44 @@ class PlannerRepository:
         job.lease_until = now + timedelta(seconds=lease_seconds)
         return job
 
-    def recover_expired_leases(self, *, now: datetime) -> int:
-        """把租约过期的 RUNNING 任务放回队列（worker 崩了没人收尸）。
+    def get_job(self, job: uuid.UUID) -> PlanJob | None:
+        return self.db.get(PlanJob, job)
 
-        只改状态不改 attempts：崩掉那次的尝试次数已经算过，这里不重复扣。
+    def recover_expired_leases(self, *, now: datetime, max_attempts: int) -> list[PlanJob]:
+        """把租约过期的 RUNNING 任务放回队列；已经用满重试次数的直接判失败并返回。
+
+        attempts 不在这里再加：领活时已经加过一次，那一次就是崩掉的尝试。
+        但没有这一步的判死，任务会被 claim_next_job 的 `attempts < max_attempts`
+        永久过滤掉——任务停在 PENDING、行程停在 GENERATING，谁都不会再来碰它。
+
+        逐行改而不是一条 UPDATE：SQLite 读回的 DateTime 没有 tzinfo，
+        在 SQL 里比较会踩 naive/aware 的坑（moderation 的 _execute_cas 是同一原因）。
         """
-        stmt = (
-            update(PlanJob)
-            .where(
-                PlanJob.state == JobState.RUNNING,
-                PlanJob.lease_until.is_not(None),
-                PlanJob.lease_until < now,
-            )
-            .values(
-                state=JobState.PENDING,
-                claimed_at=None,
-                claimed_by=None,
-                lease_until=None,
-                available_at=now,
-            )
+        stmt = select(PlanJob).where(
+            PlanJob.state == JobState.RUNNING,
+            PlanJob.lease_until.is_not(None),
         )
-        result = self.db.execute(stmt)
-        return int(result.rowcount or 0)
+        failed: list[PlanJob] = []
+        rows = list(self.db.scalars(stmt))
+        for job in rows:
+            lease = job.lease_until
+            if lease is None:
+                continue
+            if lease.tzinfo is None:
+                lease = lease.replace(tzinfo=UTC)
+            if lease >= now:
+                continue
+            job.claimed_at = None
+            job.claimed_by = None
+            job.lease_until = None
+            job.available_at = now
+            if job.attempts >= max_attempts:
+                job.state = JobState.FAILED
+                job.last_error = "worker 执行中退出，租约过期且已达重试上限"
+                failed.append(job)
+            else:
+                job.state = JobState.PENDING
+        # 会话是 autoflush=False：不显式 flush，紧接着的 claim_next_job 会读到旧状态
+        # （SQLite/PostgreSQL 都一样，行还在 PENDING 之前），回收等于没做。
+        self.db.flush()
+        return failed

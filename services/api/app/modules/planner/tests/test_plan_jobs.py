@@ -327,3 +327,41 @@ def test_detail_of_unknown_plan_is_404(client: TestClient) -> None:
 
 def test_detail_requires_login(client: TestClient) -> None:
     assert client.get(f"{API}/{uuid.uuid4()}").status_code == 401
+
+
+def test_expired_lease_with_no_attempts_left_is_failed(client: TestClient, db: Session) -> None:
+    """崩到重试上限的任务必须判死并带上行程，否则永远停在 PENDING + GENERATING。"""
+    body = _submit(client, _headers())
+    job = _only_job(db)
+    job.state = JobState.RUNNING
+    job.attempts = MAX_JOB_ATTEMPTS
+    job.claimed_by = "dead-worker:1"
+    job.lease_until = datetime.now(UTC) - timedelta(seconds=1)
+    db.commit()
+
+    assert claim_and_run(db) is False
+    job = _only_job(db)
+    assert job.state is JobState.FAILED
+    itinerary = db.get(Itinerary, uuid.UUID(body["id"]))
+    assert itinerary is not None and itinerary.state is PlanState.FAILED
+
+
+def test_unhandled_exception_is_retried_instead_of_killing_the_worker(
+    client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """worker 侧的未捕获异常要回滚、记账、继续；不能把整个进程带走。"""
+    _submit(client, _headers())
+
+    def boom(self: Any, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("模型 SDK 半路炸了")
+
+    monkeypatch.setattr("app.modules.planner.service.PlannerService.run_agents", boom)
+    assert claim_and_run(db) is True
+
+    job = _only_job(db)
+    assert job.state is JobState.PENDING
+    assert "RuntimeError" in (job.last_error or "")
+
+    monkeypatch.undo()
+    assert claim_and_run(db, now=job.available_at + timedelta(seconds=1)) is True
+    assert _only_job(db).state is JobState.DONE
