@@ -305,3 +305,35 @@ def test_service_register_race_raises_conflict(
 
     with pytest.raises(Conflict):
         IdentityService(db_session).register(username="MING", password=PASSWORD)
+
+
+def test_register_rejects_blank_username_before_trimming(client: TestClient) -> None:
+    """长度必须按 strip 之后算：否则 "   " 会以空用户名入库、"  ab  " 会以 2 字入库。"""
+    blank = client.post(REGISTER, json={"username": "   ", "password": PASSWORD})
+    assert blank.status_code == 422, blank.text
+    padded = client.post(REGISTER, json={"username": "  ab  ", "password": PASSWORD})
+    assert padded.status_code == 422, padded.text
+
+
+def test_duplicate_email_is_reported_as_email_conflict(client: TestClient) -> None:
+    first = {"username": "alice", "password": PASSWORD, "email": "Alice@Example.com"}
+    assert client.post(REGISTER, json=first).status_code == 201
+    same_email = {"username": "alice2", "password": PASSWORD, "email": "alice@example.com"}
+    resp = client.post(REGISTER, json=same_email)
+    assert resp.status_code == 409, resp.text
+    error = resp.json()["error"]
+    assert error["message"] == "这个邮箱已经被注册了"
+    assert error["details"] == [{"field": "email"}]
+
+
+def test_duplicate_email_race_still_reports_email(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """预检没查到、落库时撞唯一索引：也要按约束名翻成邮箱冲突，别说成用户名。"""
+    first = {"username": "race", "password": PASSWORD, "email": "race@example.com"}
+    assert client.post(REGISTER, json=first).status_code == 201
+    monkeypatch.setattr(IdentityRepository, "get_user_by_email", lambda self, email: None)
+    second = {"username": "race2", "password": PASSWORD, "email": "race@example.com"}
+    resp = client.post(REGISTER, json=second)
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["error"]["message"] == "这个邮箱已经被注册了"

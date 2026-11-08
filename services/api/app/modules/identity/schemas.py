@@ -5,8 +5,20 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    StringConstraints,
+    field_validator,
+)
+
+# strip 必须在长度判断之前：否则 "   " 能通过 min_length=3，入库后变成空用户名，
+# 而 "  ab  " 会以 "ab" 落库——两者都绕过了契约的 3..24。
+Username = Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=24)]
 
 
 class RegisterIn(BaseModel):
@@ -16,7 +28,7 @@ class RegisterIn(BaseModel):
     不在 service 里手搓 422。
     """
 
-    username: str = Field(min_length=3, max_length=24)
+    username: Username
     password: str = Field(min_length=8)
     # EmailStr 就是契约里的 format: email（由 email-validator 提供），格式不对直接 422
     email: EmailStr | None = Field(default=None, max_length=254)

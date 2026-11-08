@@ -115,23 +115,31 @@ class IdentityService:
     # ===== 对外能力 =====
     def register(self, *, username: str, password: str, email: str | None = None) -> IssuedTokens:
         name = _normalize_username(username)
+        normalized_email = _normalize_email(email)
         if self.repo.get_user_by_username(name) is not None:
             raise Conflict("这个用户名已经被注册了")
+        if (
+            normalized_email is not None
+            and self.repo.get_user_by_email(normalized_email) is not None
+        ):
+            # 契约只有 409 没有细分错误码；用 details.field 告诉前端该标哪个输入框，
+            # 文案不再统一说成「用户名已注册」——否则用户改完名字还是注册不上。
+            raise Conflict("这个邮箱已经被注册了", details=[{"field": "email"}])
         try:
             user = self.repo.add_user(
                 User(
                     username=name,
-                    email=_normalize_email(email),
+                    email=normalized_email,
                     password_hash=hash_password(password),
                     role=ROLE_USER,
                     status=STATUS_ACTIVE,
                 )
             )
         except IntegrityError as exc:
-            # 预检与落库之间有间隙：另一个请求同时注册同名时，uq_users_username_lower 会在这里炸。
-            # 先回滚把会话修好（否则这条连接上的后续查询全废），再翻成契约里的 409。
+            # 预检与落库之间有间隙：另一个请求同时注册同名/同邮箱时，唯一索引会在这里炸。
+            # 先回滚把会话修好（否则这条连接上的后续查询全废），再按约束名翻成对应的 409。
             self.db.rollback()
-            raise Conflict("这个用户名已经被注册了") from exc
+            raise _duplicate_conflict(exc) from exc
         return self._issue(user)
 
     def login(self, *, username: str, password: str) -> IssuedTokens:
@@ -245,6 +253,18 @@ class IdentityService:
 def _normalize_username(raw: str) -> str:
     """入库前统一 strip + lower：小写函数唯一索引才对得上，大小写不同算同一个人。"""
     return raw.strip().lower()
+
+
+def _duplicate_conflict(exc: IntegrityError) -> Conflict:
+    """唯一约束撞的是哪个字段就报哪个。
+
+    只回一句「用户名被注册了」会把邮箱重复也说成用户名重复，用户改完名字再提交
+    还是失败。PostgreSQL 与 SQLite 的报错文案都带约束名，直接按字段名分流。
+    """
+    detail = str(getattr(exc, "orig", exc)).lower()
+    if "email" in detail:
+        return Conflict("这个邮箱已经被注册了", details=[{"field": "email"}])
+    return Conflict("这个用户名已经被注册了")
 
 
 def session_is_revoked(db: Session, session_id: str) -> bool:

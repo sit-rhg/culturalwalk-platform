@@ -10,7 +10,13 @@ from datetime import datetime
 from sqlalchemy import and_, or_, select, text
 from sqlalchemy.orm import Session, lazyload
 
-from app.modules.catalog.models import Place, PlaceFact, PlaceSource, PlaceStatus
+from app.modules.catalog.models import (
+    IdempotencyRecord,
+    Place,
+    PlaceFact,
+    PlaceSource,
+    PlaceStatus,
+)
 
 
 def _escape_like(value: str) -> str:
@@ -66,6 +72,20 @@ class CatalogRepository:
 
     def get_place(self, place_id: uuid.UUID) -> Place | None:
         return self.db.get(Place, place_id)
+
+    def get_fact(self, fact_id: uuid.UUID) -> PlaceFact | None:
+        return self.db.get(PlaceFact, fact_id)
+
+    def get_idempotency(
+        self, *, actor_id: uuid.UUID, scope: str, key: str
+    ) -> IdempotencyRecord | None:
+        """按 (发起人, 端点, key) 找首次记录；key 是客户端给的，不能跨人复用。"""
+        stmt = select(IdempotencyRecord).where(
+            IdempotencyRecord.actor_id == actor_id,
+            IdempotencyRecord.scope == scope,
+            IdempotencyRecord.key == key,
+        )
+        return self.db.scalars(stmt).first()
 
     def add_place(self, place: Place) -> Place:
         self.db.add(place)

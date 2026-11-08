@@ -219,3 +219,41 @@ def test_create_fact_permissions_and_missing_place(
     assert missing.json()["error"]["code"] == "PLACE_NOT_FOUND"
     with session_factory() as db:
         assert list(db.scalars(select(PlaceFact))) == []
+
+
+def test_create_place_is_idempotent_per_key(
+    client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    """同一个 Idempotency-Key 重试必须返回同一个 id，不能再落一行。"""
+    headers = _headers("editor")
+    first = client.post(BASE, headers=headers, json=_payload())
+    second = client.post(BASE, headers=headers, json=_payload())
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    assert second.json()["id"] == first.json()["id"]
+    with session_factory() as db:
+        assert len(db.scalars(select(Place)).all()) == 1
+
+
+def test_same_key_with_different_body_is_conflict(client: TestClient) -> None:
+    headers = _headers("editor")
+    assert client.post(BASE, headers=headers, json=_payload()).status_code == 201
+    changed = client.post(BASE, headers=headers, json=_payload(name="橘子洲"))
+    assert changed.status_code == 409, changed.text
+    assert changed.json()["error"]["code"] == "IDEMPOTENCY_KEY_REUSED"
+
+
+def test_add_fact_is_idempotent_per_key(
+    client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    place = _create_place(client)
+    headers = _headers("editor")
+    url = f"{BASE}/{place['id']}/facts"
+    first = client.post(url, headers=headers, json=_fact_payload())
+    second = client.post(url, headers=headers, json=_fact_payload())
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    assert second.json()["id"] == first.json()["id"]
+    with session_factory() as db:
+        assert len(db.scalars(select(PlaceFact)).all()) == 1
+        assert len(db.scalars(select(PlaceSource)).all()) == 1

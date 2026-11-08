@@ -24,6 +24,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     Uuid,
     func,
 )
@@ -190,3 +191,31 @@ class PlaceFact(Base):
 
     place: Mapped[Place] = relationship(back_populates="facts")
     source: Mapped[PlaceSource | None] = relationship(lazy="joined")
+
+
+class IdempotencyRecord(Base):
+    """幂等键 → 首次结果。
+
+    契约要求同一个 Idempotency-Key 重试时返回首次结果（docs/03 §1.2，存 24h）。
+    catalog 的两个写端点共用这张表：scope 区分端点，actor_id 把 key 限定在发起人
+    范围内——否则别人拿着同一个 key 能读到你的响应。object_id 先占位后回填：
+    预占行在事务提交前对别人不可见，所以并发同 key 的败者要么撞唯一约束、
+    要么读到已提交的完整记录。
+    """
+
+    __tablename__ = "idempotency_records"
+    __table_args__ = (
+        UniqueConstraint("actor_id", "scope", "key", name="uq_idempotency_actor_scope_key"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    actor_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False, index=True)
+    scope: Mapped[str] = mapped_column(String(48), nullable=False)
+    key: Mapped[str] = mapped_column(String(64), nullable=False)
+    # 请求体指纹：同 key 不同体是客户端错误，不能当成重放把别人的结果返回去。
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    object_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    object_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
