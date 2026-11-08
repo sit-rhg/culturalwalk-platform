@@ -100,6 +100,8 @@ class SubmissionDetailOut(SubmissionOut):
     snapshot: dict[str, Any] = Field(default_factory=dict)
     previous_snapshot: dict[str, Any] | None = None
     author: AuthorOut | None = None
+    # 快照节点只有 place_id，审核页要显示地名；编辑中的草稿点位可能不是 VERIFIED，只查名字不查状态。
+    place_names: dict[str, str] = Field(default_factory=dict)
 
 
 class ReviewTaskOut(BaseModel):

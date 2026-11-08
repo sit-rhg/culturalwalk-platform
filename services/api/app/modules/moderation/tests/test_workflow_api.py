@@ -163,6 +163,8 @@ def test_submit_review_publish_unpublish_happy_path(
     assert detail_body["state"] == "APPROVED"
     assert detail_body["snapshot"]["title"] == "城市漫步"
     assert detail_body["previous_snapshot"] is None
+    # 草稿没加节点，映射为空但字段必须在：审核页靠它把 place_id 翻成地名
+    assert detail_body["place_names"] == {}
     assert detail_body["author"]["username"] == "xiaoming"
 
     assert (

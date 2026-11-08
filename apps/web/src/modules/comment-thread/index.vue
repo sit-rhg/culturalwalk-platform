@@ -3,7 +3,7 @@ import { onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import { errorMessage as readError } from '@/api/adapters'
-import { createRouteComment, fetchRouteComments, pinRouteComment } from '@/api/endpoints'
+import { createRouteComment, fetchRouteCommentPage, pinRouteComment } from '@/api/endpoints'
 import type { Schemas } from '@/api/types'
 import { relativeTime } from '@/shared/format'
 import { isLoggedIn } from '@/shared/session'
@@ -19,12 +19,21 @@ const props = defineProps<{ routeId: string; canPin?: boolean }>()
 
 const items = ref<Comment[]>([])
 const loading = ref(true)
+const loadingMore = ref(false)
+const nextCursor = ref<string | null>(null)
 const loadError = ref('')
 const body = ref('')
 const posting = ref(false)
 const formError = ref('')
 const successHint = ref('')
 const pinningId = ref('')
+
+function mergeComments(current: Comment[], incoming: Comment[]): Comment[] {
+  // 翻页期间可能有人新发评论：按 id 去重，再重新排一次（置顶/时间序由 sortComments 保证）。
+  const byId = new Map(current.map((comment) => [comment.id, comment]))
+  incoming.forEach((comment) => byId.set(comment.id, comment))
+  return sortComments([...byId.values()])
+}
 
 async function load(): Promise<void> {
   if (!props.routeId) {
@@ -34,12 +43,31 @@ async function load(): Promise<void> {
   loading.value = true
   loadError.value = ''
   try {
-    items.value = sortComments(await fetchRouteComments(props.routeId))
+    const page = await fetchRouteCommentPage(props.routeId)
+    items.value = sortComments(page.items)
+    nextCursor.value = page.nextCursor
   } catch (error) {
     items.value = []
+    nextCursor.value = null
     loadError.value = readError(error, '评论加载失败')
   } finally {
     loading.value = false
+  }
+}
+
+async function loadMore(): Promise<void> {
+  const cursor = nextCursor.value
+  if (!cursor || loadingMore.value) return
+  loadingMore.value = true
+  formError.value = ''
+  try {
+    const page = await fetchRouteCommentPage(props.routeId, { cursor })
+    items.value = mergeComments(items.value, page.items)
+    nextCursor.value = page.nextCursor
+  } catch (error) {
+    formError.value = readError(error, '更多评论加载失败')
+  } finally {
+    loadingMore.value = false
   }
 }
 
@@ -113,6 +141,15 @@ async function pin(id: string): Promise<void> {
           </button>
         </li>
       </ul>
+      <button
+        v-if="nextCursor"
+        class="btn ghost small load-more"
+        type="button"
+        :disabled="loadingMore"
+        @click="loadMore"
+      >
+        {{ loadingMore ? '加载中…' : '加载更多评论' }}
+      </button>
     </template>
 
     <form v-if="isLoggedIn" class="form" @submit.prevent="submit">

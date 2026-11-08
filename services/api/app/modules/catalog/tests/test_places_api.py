@@ -15,6 +15,7 @@ from httpx import Response
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.modules.catalog.models import FactConfidence, Place, PlaceFact, PlaceSource, PlaceStatus
+from app.modules.catalog.service import CatalogService
 
 ENDPOINT = "/api/v1/places"
 BASE_TIME = datetime(2026, 10, 1, 8, 0, tzinfo=UTC)
@@ -430,3 +431,16 @@ def test_detail_of_draft_place_is_hidden(
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "PLACE_NOT_FOUND"
+
+
+def test_place_names_resolves_ids_for_review_diff(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """审核页要把快照里的 place_id 翻成地名；草稿点位也要能翻，否则编辑中的草稿会显示短 id。"""
+    verified = _add_place(session_factory, name="岳麓书院")
+    draft = _add_place(session_factory, name="还没核实的巷子", status=PlaceStatus.DRAFT)
+
+    with session_factory() as session:
+        names = CatalogService(session).place_names([str(verified), str(draft), "not-a-uuid"])
+
+    assert names == {str(verified): "岳麓书院", str(draft): "还没核实的巷子"}

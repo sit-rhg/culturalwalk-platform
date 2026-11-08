@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from collections.abc import Iterable
 from typing import Any
 
 from pydantic import BaseModel
@@ -85,6 +86,12 @@ class RoutesService:
     def __init__(self, db: Session) -> None:
         self.db = db
         self.repo = RoutesRepository(db)
+
+    def place_names(self, place_ids: Iterable[str]) -> dict[str, str]:
+        """审核页要把版本快照里的 place_id 显示成地名；moderation 不能直连 catalog，
+        所以由本模块转发一次（依赖方向 routes -> catalog 本来就有）。
+        """
+        return CatalogService(self.db).place_names(place_ids)
 
     # ===== 草稿列表 =====
     def list_mine(
