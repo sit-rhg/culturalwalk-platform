@@ -33,6 +33,7 @@ class PublishedRoute:
 
     route_id: uuid.UUID
     draft_title: str
+    channel: str
     snapshot: dict[str, Any]
 
 
@@ -65,7 +66,12 @@ class IdentityRepository:
         每个 route 第一次出现的那版就是当前对外展示的版本。
         """
         stmt = (
-            select(Publication.route_id, RouteVersion, RouteDraft.title)
+            select(
+                Publication.route_id,
+                RouteVersion,
+                RouteDraft.title,
+                RouteDraft.channel,
+            )
             .join(RouteVersion, RouteVersion.id == Publication.version_id)
             .join(RouteDraft, RouteDraft.id == RouteVersion.draft_id)
             .where(
@@ -79,13 +85,14 @@ class IdentityRepository:
             )
         )
         latest: dict[uuid.UUID, PublishedRoute] = {}
-        for route_id, version, draft_title in self.db.execute(stmt):
+        for route_id, version, draft_title, channel in self.db.execute(stmt):
             snapshot = version.snapshot if isinstance(version.snapshot, dict) else {}
             latest.setdefault(
                 route_id,
                 PublishedRoute(
                     route_id=route_id,
                     draft_title=draft_title,
+                    channel=channel,
                     snapshot=snapshot,
                 ),
             )
@@ -129,6 +136,16 @@ class IdentityRepository:
         # 不必再 flush：execute 之前挂起的变更已经被刷出去了，rowcount 就是本条语句的结果。
         result = cast(CursorResult[Any], self.db.execute(stmt))
         return result.rowcount == 1
+
+    def replace_refresh_hash(self, session_id: uuid.UUID, new_hash: str) -> None:
+        """轮换后让旧摘要失效：这枚 refresh 再来时就等同于「摘要对不上」。"""
+        stmt = (
+            update(LoginSession)
+            .where(LoginSession.id == session_id)
+            .values(refresh_hash=new_hash)
+            .execution_options(synchronize_session=False)
+        )
+        self.db.execute(stmt)
 
     def revoke_all_for_user(self, user_id: uuid.UUID, when: datetime) -> int:
         """只动未撤销的会话，重复调用是幂等的（已撤销的时间戳不被覆盖）。"""

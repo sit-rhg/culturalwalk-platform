@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.core.deps import create_access_token
 from app.core.errors import Conflict
 from app.modules.audit.models import AuditLog
+from app.modules.media.adapters.objects import LocalObjectStore
 from app.modules.media.models import MediaAsset, MediaZone, ScanState
 from app.modules.media.service import MediaService
 
@@ -296,3 +297,21 @@ def test_intent_key_reuse_after_delete_is_conflict_not_500(client: TestClient) -
     replay = _intent(client, me, key=key, role="editor")
     assert replay.status_code == 409, replay.text
     assert replay.json()["error"]["code"] == "MEDIA_INTENT_DELETED"
+
+
+def test_delete_removes_the_stored_bytes(client: TestClient, tmp_path, monkeypatch) -> None:
+    """软删只改库是旧行为：对象存储里的原图与缩略图也要清掉。"""
+    store = LocalObjectStore(tmp_path / "media")
+    monkeypatch.setattr("app.modules.media.service.get_object_store", lambda: store)
+    me = uuid.uuid4()
+    created = _intent(client, me, role="editor")
+    assert created.status_code == 201, created.text
+    key = created.json()["fields"]["key"]
+    store.put(key, b"original-bytes")
+    store.put(f"{key}.thumb.webp", b"thumb-bytes")
+
+    deleted = client.delete(f"{BASE}/{created.json()['asset_id']}", headers=_headers(me, "editor"))
+
+    assert deleted.status_code == 204, deleted.text
+    assert store.exists(key) is False
+    assert store.exists(f"{key}.thumb.webp") is False
