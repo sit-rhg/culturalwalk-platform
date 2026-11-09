@@ -11,6 +11,7 @@ import uuid
 from collections.abc import Iterator
 
 import pytest
+from fastapi import Request
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -27,6 +28,7 @@ from app.modules.identity.models import ROLE_ADMIN, ROLE_USER, STATUS_ACTIVE, Us
 from app.modules.identity.service import hash_password
 
 ADMIN_ID = "11111111-1111-1111-1111-111111111111"
+EDITOR_ID = "33333333-3333-3333-3333-333333333333"
 USER_ID = "22222222-2222-2222-2222-222222222222"
 
 # argon2 摘要只算一次：夹具要种真账号，每次重算白等 50ms × 用例数
@@ -77,8 +79,15 @@ def db_session() -> Iterator[Session]:
 
 @pytest.fixture()
 def client(db_session: Session) -> Iterator[TestClient]:
-    def _override() -> Iterator[Session]:
+    """覆盖 get_db，但要复刻生产的两件事：request.state.db 供中间件提交、
+    请求结束后回滚残留事务。不设 state.db 时 commit_session 永远拿不到会话，
+    「响应前提交」这条路径在测试里等于没被覆盖。"""
+
+    def _override(request: Request) -> Iterator[Session]:
+        request.state.db = db_session
         yield db_session
+        if db_session.in_transaction():
+            db_session.rollback()
 
     app.dependency_overrides[get_db] = _override
     with TestClient(app) as test_client:
@@ -86,14 +95,23 @@ def client(db_session: Session) -> Iterator[TestClient]:
     app.dependency_overrides.clear()
 
 
-def _headers(*, user_id: str, username: str, role: str) -> dict[str, str]:
-    token = create_access_token(user_id=user_id, username=username, role=role)
+def _headers(
+    *, user_id: str, username: str, role: str, session_id: str | None = None
+) -> dict[str, str]:
+    token = create_access_token(
+        user_id=user_id, username=username, role=role, session_id=session_id
+    )
     return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture()
 def admin_headers() -> dict[str, str]:
     return _headers(user_id=ADMIN_ID, username="boss", role="admin")
+
+
+@pytest.fixture()
+def editor_headers() -> dict[str, str]:
+    return _headers(user_id=EDITOR_ID, username="editor", role="editor")
 
 
 @pytest.fixture()

@@ -12,7 +12,7 @@ from typing import Annotated
 from fastapi import APIRouter, Header, Query, Request
 
 from app.core.db import DbDep
-from app.core.deps import AdminDep
+from app.core.deps import EditorDep
 from app.core.pagination import DEFAULT_LIMIT, MAX_LIMIT
 from app.modules.catalog.schemas import (
     PlaceCreateIn,
@@ -63,7 +63,7 @@ def list_places(
 )
 def create_place(
     payload: PlaceCreateIn,
-    user: AdminDep,
+    user: EditorDep,
     db: DbDep,
     request: Request,
     idempotency_key: IdempotencyKey,
@@ -89,7 +89,7 @@ def get_place(place_id: uuid.UUID, db: DbDep) -> PlaceDetailOut:
 def create_place_fact(
     place_id: uuid.UUID,
     payload: PlaceFactCreateIn,
-    user: AdminDep,
+    user: EditorDep,
     db: DbDep,
     request: Request,
     idempotency_key: IdempotencyKey,

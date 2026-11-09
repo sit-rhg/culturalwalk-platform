@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.deps import create_access_token
 from app.core.errors import Conflict, NotFound, Unauthorized
+from app.modules.audit.service import AuditService
 from app.modules.identity.models import (
     ROLE_USER,
     STATUS_ACTIVE,
@@ -50,6 +51,10 @@ TYP_REFRESH = "refresh"
 # argon2-cffi 的默认实现就是 Argon2id（并行度、内存、轮数都用库的默认值），
 # 这里不手调参数：调紧了拖慢登录，调松了等于自降强度。
 _hasher = PasswordHasher()
+
+# 用户不存在时也要跑一次 argon2：真密码校验约 60ms，直接 401 只要 10ms，
+# 撞库的人靠响应时间就能判断"这个用户名存在"。摘要只在 import 时算一次。
+_DUMMY_PASSWORD_HASH = _hasher.hash("dummy-password-for-timing")
 
 
 @dataclass(frozen=True)
@@ -144,8 +149,12 @@ class IdentityService:
 
     def login(self, *, username: str, password: str) -> IssuedTokens:
         user = self.repo.get_user_by_username(_normalize_username(username))
-        # 用户不存在与密码错返回同一句文案：别把"这个用户名存在"透给撞库的人
-        if user is None or not verify_password(user.password_hash, password):
+        # 用户不存在与密码错返回同一句文案：别把"这个用户名存在"透给撞库的人。
+        # 分支里也要走一次 argon2，否则耗时差本身就把答案说出去了。
+        if user is None:
+            verify_password(_DUMMY_PASSWORD_HASH, password)
+            raise Unauthorized("用户名或密码不正确")
+        if not verify_password(user.password_hash, password):
             raise Unauthorized("用户名或密码不正确")
         if user.status != STATUS_ACTIVE:
             raise Unauthorized("账号已被停用")
@@ -156,8 +165,11 @@ class IdentityService:
         session = self.repo.get_session(session_id)
         if session is None or session.user_id != user_id:
             raise Unauthorized("登录已失效，请重新登录")
-        # 摘要对不上说明这枚令牌不是这次会话签出去的（或已被轮换掉）
+        # 摘要对不上说明这枚令牌不是这次会话签出去的（或已被轮换掉）。
+        # 轮换后的旧 refresh 再出现，按「很可能被窃取」处理：整条会话家族一起作废，
+        # 让真正的用户重新登录，而不是让偷到旧令牌的人继续换。
         if not hmac.compare_digest(session.refresh_hash, hash_refresh_token(refresh_token)):
+            self._revoke_after_refresh_reuse(user_id)
             raise Unauthorized("登录已失效，请重新登录")
         now = utcnow()
         if session.revoked_at is not None or _as_utc(session.expires_at) <= now:
@@ -170,14 +182,38 @@ class IdentityService:
         # 两个并发请求可能都拿到 revoked_at 为空的那一份，唯一能拦住第二个的就是这条 SQL。
         if not self.repo.revoke_if_active(session.id, now):
             raise Unauthorized("登录已失效，请重新登录")
+        # 把旧会话的摘要换成一个谁都对不上的值：这枚 refresh 再来时走"摘要不匹配"，
+        # 与「登出后重放」区分开——登出只该 401，轮换后重放才按泄露撤全家。
+        self.repo.replace_refresh_hash(session.id, hash_refresh_token(uuid.uuid4().hex))
         return self._issue(user)
 
-    def logout(self, *, user_id: uuid.UUID, session_id: uuid.UUID | None = None) -> int:
+    def _revoke_after_refresh_reuse(self, user_id: uuid.UUID) -> None:
+        """旧 refresh 被再次兑换：撤销该用户全部会话，并留下一行审计。"""
+        now = utcnow()
+        revoked = self.repo.revoke_all_for_user(user_id, now)
+        AuditService(self.db).write(
+            action="auth.refresh_reuse",
+            object_type="user",
+            object_id=str(user_id),
+            reason=f"轮换后的旧 refresh 被再次使用，已撤销 {revoked} 个会话",
+        )
+        # 401 响应会触发统一回滚，安全动作必须自己先落库；否则撤销随异常一起消失，
+        # 偷到旧令牌的人还能拿同一枚继续兑换。
+        self.db.commit()
+
+    def logout(
+        self,
+        *,
+        user_id: uuid.UUID,
+        session_id: uuid.UUID | None = None,
+        idempotency_key: str | None = None,
+    ) -> int:
         """退出登录：按 access 令牌里的 sid 撤销**本次**会话。
 
         契约的 /auth/logout 没有请求体，所以定位会话只能靠 access 令牌自带的 sid。
         会话不存在或不属于本人时返回 0 且不报错：退出是幂等的，重复调用仍 204。
-        返回被撤销的会话数，给测试和审计留个可断言的返回值。
+        返回本次真正撤销的会话数：第二次带同一个 Idempotency-Key 调过来是 0，
+        审计也只记第一次，不会每次重试都堆一条。
 
         兜底（有意为之，需要知道）：没有 sid 的 access 令牌会撤销该用户**全部**未撤销
         会话——多设备会一起下线。当前只有 ID-02 之前签发的令牌没有 sid，等令牌全面带
@@ -185,13 +221,24 @@ class IdentityService:
         """
         now = utcnow()
         if session_id is None:
-            return self.repo.revoke_all_for_user(user_id, now)
-        session = self.repo.get_session(session_id)
-        if session is None or session.user_id != user_id:
-            return 0
-        if session.revoked_at is None:
+            revoked = self.repo.revoke_all_for_user(user_id, now)
+        else:
+            session = self.repo.get_session(session_id)
+            if session is None or session.user_id != user_id:
+                return 0
+            if session.revoked_at is not None:
+                # 已经退过了：幂等返回，不重复写审计。
+                return 0
             self.repo.revoke(session, now)
-        return 1
+            revoked = 1
+        if revoked:
+            AuditService(self.db).write(
+                action="auth.logout",
+                object_type="user",
+                object_id=str(user_id),
+                reason=f"idempotency_key={idempotency_key}" if idempotency_key else None,
+            )
+        return revoked
 
     def get_user(self, user_id: uuid.UUID) -> User | None:
         return self.repo.get_user(user_id)
@@ -301,7 +348,7 @@ def _profile_route(row: PublishedRoute, *, user: User) -> ProfileRouteOut:
         id=row.route_id,
         title=title.strip() if isinstance(title, str) and title.strip() else row.draft_title,
         summary=summary if isinstance(summary, str) and summary else None,
-        channel="user",
+        channel=row.channel,
         author=ProfileAuthorOut(id=user.id, username=user.username),
         theme_tags=[tag for tag in tags if isinstance(tag, str)] if isinstance(tags, list) else [],
         duration_minutes=duration
