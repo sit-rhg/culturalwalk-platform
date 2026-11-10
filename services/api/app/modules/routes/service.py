@@ -605,8 +605,9 @@ class RoutesService:
         """把草稿 + 节点渲染成详情。
 
         places 是本次写入已经解析过的缓存，省掉重复查询；读详情时按需解析。
-        地点在加入草稿之后被下线/删除的节点直接跳过——不能 500，否则作者
-        连打开草稿去替换它的机会都没有。
+        地点在加入草稿之后被下线/删除的节点仍然保留，并标 place_missing——
+        直接跳过会让 position 出现空洞、费用和 unknown 都漏算，作者也无从知道
+        是哪一站失效了；不能 500，否则作者连替换它的机会都没有。
         """
         cache: dict[uuid.UUID, PlaceOut | None] = dict(places or {})
         catalog = CatalogService(self.db)
@@ -619,12 +620,11 @@ class RoutesService:
                 except NotFound:
                     place = None
                 cache[node.place_id] = place
-            if place is None:
-                continue
             nodes.append(
                 RouteNodeOut(
                     position=node.position,
                     place=place,
+                    place_missing=place is None,
                     stay_minutes=node.stay_minutes,
                     transport=node.transport,
                     note=node.note,
@@ -651,8 +651,11 @@ def _cost_of(nodes: list[RouteNodeOut]) -> CostSummaryOut:
 
     把缺失当 0 会让「预算 300」的路线看起来比实际便宜，所以单独计数，
     前端可以提示「还有 N 站未填价格」。口径与 community 的公开路线共用 core.costing。
+    地点失效的节点即使填过价格也按未知计：地点没了，价格不再可信。
     """
-    totals = summarize_cost((node.price_min, node.price_max) for node in nodes)
+    totals = summarize_cost(
+        (None, None) if node.place_missing else (node.price_min, node.price_max) for node in nodes
+    )
     return CostSummaryOut(
         min_total=totals.min_total,
         max_total=totals.max_total,

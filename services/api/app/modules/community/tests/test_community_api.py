@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.modules.audit.models import AuditLog
@@ -570,3 +570,20 @@ def test_unknown_audience_query_is_422(client: TestClient) -> None:
     response = client.get(ROUTES_API, params={"audience": "famliy"})
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "VALIDATION_FAILED"
+
+
+def test_detail_keeps_missing_place_as_placeholder(client: TestClient, db_session: Session) -> None:
+    """发布后地点被删除：条目仍留在行程里，place 为空并标 place_missing。"""
+    place_id = _place(db_session)
+    route_id = _published_route(db_session, place_id=place_id)
+
+    db_session.execute(delete(Place).where(Place.id == place_id))
+    db_session.commit()
+
+    response = client.get(f"{ROUTES_API}/{route_id}")
+    assert response.status_code == 200, response.text
+    items = response.json()["days"][0]["items"]
+    assert len(items) == 1
+    assert items[0]["position"] == 1
+    assert items[0]["place"] is None
+    assert items[0]["place_missing"] is True

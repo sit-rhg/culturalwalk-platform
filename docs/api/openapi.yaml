@@ -1294,7 +1294,12 @@ components:
                 type: object
                 properties:
                   position: { type: integer }
-                  place: { $ref: "#/components/schemas/Place" }
+                  place:
+                    description: 地点被删/下线时为 null，此时 place_missing 为 true。
+                    oneOf:
+                      - $ref: "#/components/schemas/Place"
+                      - type: "null"
+                  place_missing: { type: boolean, default: false }
                   stay_minutes: { type: integer }
                   transport:
                     type: [string, "null"]
@@ -1521,7 +1526,12 @@ components:
                       type: object
                       properties:
                         order: { type: integer }
-                        place: { $ref: "#/components/schemas/Place" }
+                        place:
+                          description: 地点被删/下线时为 null，此时 place_missing 为 true。
+                          oneOf:
+                            - $ref: "#/components/schemas/Place"
+                            - type: "null"
+                        place_missing: { type: boolean, default: false }
                         stay_minutes: { type: integer }
                         transport: { type: string }
                         price_min: { type: [integer, "null"] }
