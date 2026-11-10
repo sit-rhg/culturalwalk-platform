@@ -305,9 +305,33 @@ def test_route_detail_days_and_etag(client: TestClient, db_session: Session) -> 
     assert item["place"]["name"] == "岳麓书院"
     assert (item["price_min"], item["price_max"]) == (1000, 2000)
     etag = response.headers["ETag"]
+    assert response.headers["Cache-Control"] == "public, max-age=60"
     cached = client.get(f"{ROUTES_API}/{route_id}", headers={"If-None-Match": etag})
     assert cached.status_code == 304
     assert cached.content == b""
+    assert cached.headers["ETag"] == etag
+    assert cached.headers["Cache-Control"] == "public, max-age=60"
+
+
+def test_route_list_sets_etag_and_serves_304(client: TestClient, db_session: Session) -> None:
+    """列表也带 ETag/Cache-Control；内容没变时 304，不用重复下载一页。"""
+    _published_route(db_session)
+
+    first = client.get(ROUTES_API)
+    assert first.status_code == 200
+    etag = first.headers["ETag"]
+    assert etag.startswith('"')
+    assert first.headers["Cache-Control"] == "public, max-age=60"
+
+    cached = client.get(ROUTES_API, headers={"If-None-Match": etag})
+    assert cached.status_code == 304
+    assert cached.content == b""
+    assert cached.headers["ETag"] == etag
+
+    # 换一种筛选（内容不同）必须换标签，否则会拿到上一页的缓存。
+    other = client.get(ROUTES_API, params={"q": "不存在的路线"})
+    assert other.status_code == 200
+    assert other.headers["ETag"] != etag
 
 
 def test_versions_require_login_and_published(

@@ -648,9 +648,17 @@ paths:
             enum: [official, user]
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/Limit"
+        - name: If-None-Match
+          in: header
+          schema: { type: string }
       responses:
         "200":
           description: 路线分页（只含已发布）
+          headers:
+            ETag:
+              schema: { type: string }
+            Cache-Control:
+              schema: { type: string, example: "public, max-age=60" }
           content:
             application/json:
               schema:
@@ -660,6 +668,8 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/RouteSummary" }
                   next_cursor: { type: [string, "null"] }
+        "304":
+          description: 未变更（If-None-Match 命中）
 
   /routes/{route_id}:
     get:
@@ -677,10 +687,16 @@ paths:
           headers:
             ETag:
               schema: { type: string }
+            Cache-Control:
+              schema: { type: string, example: "public, max-age=60" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RouteDetail" }
-        "304": { description: 未变更 }
+        "304":
+          description: 未变更
+          headers:
+            ETag:
+              schema: { type: string }
         "404":
           description: 不存在或未发布（两者同码，防信息泄露）
           content:
