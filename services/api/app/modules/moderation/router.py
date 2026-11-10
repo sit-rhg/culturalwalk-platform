@@ -12,10 +12,10 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, Query, Request, status
+from fastapi import APIRouter, Header, Query, Request, status
 
 from app.core.db import DbDep
-from app.core.deps import CurrentUser, CurrentUserDep, require_role
+from app.core.deps import CurrentUserDep, EditorDep
 from app.core.pagination import DEFAULT_LIMIT, MAX_LIMIT
 from app.modules.moderation.models import ReviewTaskState
 from app.modules.moderation.schemas import (
@@ -33,10 +33,11 @@ from app.modules.moderation.schemas import (
 from app.modules.moderation.service import ModerationService
 from app.modules.routes.schemas import RouteDraftOut
 
-# 契约里没有独立的 reviewer 角色（仓库只有 user/editor/admin）。审核与发布
-# 都按 docs/00 §5 交给 editor/admin：admin 是 editor 的超集（is_admin）。
-ReviewerDep = Annotated[CurrentUser, Depends(require_role("editor", "admin"))]
-PublisherDep = Annotated[CurrentUser, Depends(require_role("editor", "admin"))]
+# 仓库没有独立的 reviewer 角色（只有 user/editor/admin）。审核与发布都交给
+# editor/admin，直接复用 core 的 EditorDep（admin 是 editor 的超集）：
+# docs/00 §2 编辑「可审核、发布精选」，docs/03 §2.4 图例 ✍️ 也是这个口径。
+ReviewerDep = EditorDep
+PublisherDep = EditorDep
 
 IdempotencyKey = Annotated[
     str,

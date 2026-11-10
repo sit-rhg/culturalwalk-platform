@@ -87,3 +87,9 @@ if (typeof window !== 'undefined') {
 export const currentUser = computed(() => state.user)
 export const isLoggedIn = computed(() => state.user !== null)
 export const isAdmin = computed(() => state.user?.role === 'admin')
+// 审核台、审核任务、发布/下线：契约图例 ✍️（管理员或编辑）。
+// 只看 isAdmin 会把 editor 挡在门外，和 docs/00 §2、后端 EditorDep 不一致。
+export const canModerate = computed(() => {
+  const role = state.user?.role
+  return role === 'admin' || role === 'editor'
+})

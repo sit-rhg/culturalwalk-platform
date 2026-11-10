@@ -10,7 +10,7 @@ import { fetchUserProfile, markNotificationRead } from '@/api/endpoints'
 import { ApiError, api } from '@/shared/api'
 import { isDemo, pendingEndpoint } from '@/shared/capabilities'
 import { relativeTime, shortDate } from '@/shared/format'
-import { isAdmin, isLoggedIn, logout } from '@/shared/session'
+import { canModerate, isLoggedIn, logout } from '@/shared/session'
 import DemoNotice from '@/shared/ui/DemoNotice.vue'
 import EmptyState from '@/shared/ui/EmptyState.vue'
 import Skeleton from '@/shared/ui/Skeleton.vue'
@@ -52,7 +52,7 @@ const routeCards = computed(() =>
 const stats = computed(() => profileStats(profile.value))
 const unreadCount = computed(() => notifications.value.filter(isUnread).length)
 // 会话里缓存的 role 可能过期，以 /users/me 返回的为准
-const showAdmin = computed(() => me.value?.role === 'admin' || isAdmin.value)
+const showAdmin = computed(() => me.value?.role === 'admin' || canModerate.value)
 
 function describe(error: unknown, fallback: string): string {
   return readError(error, fallback)

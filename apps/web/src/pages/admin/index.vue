@@ -26,7 +26,7 @@ import {
 } from '@/api/endpoints'
 import { api } from '@/shared/api'
 import { relativeTime, reviewActionLabel } from '@/shared/format'
-import { isAdmin, isLoggedIn, refreshMe } from '@/shared/session'
+import { canModerate, isLoggedIn, refreshMe } from '@/shared/session'
 import EmptyState from '@/shared/ui/EmptyState.vue'
 import Modal from '@/shared/ui/Modal.vue'
 import Skeleton from '@/shared/ui/Skeleton.vue'
@@ -84,7 +84,7 @@ function upsert(task: ReviewTask): void {
 }
 
 async function loadTasks(): Promise<void> {
-  if (!isAdmin.value) {
+  if (!canModerate.value) {
     loading.value = false
     return
   }
@@ -262,7 +262,7 @@ onMounted(async () => {
       <RouterLink class="btn small" to="/login">去登录</RouterLink>
     </EmptyState>
 
-    <EmptyState v-else-if="!isAdmin" title="需要审核权限" hint="当前账号不是审核编辑，换一个身份再试">
+    <EmptyState v-else-if="!canModerate" title="需要审核权限" hint="当前账号不是审核编辑，换一个身份再试">
       <RouterLink class="btn small" to="/login">用审核编辑身份登录</RouterLink>
     </EmptyState>
 
