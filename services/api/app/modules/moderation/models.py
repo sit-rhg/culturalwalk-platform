@@ -15,8 +15,21 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Any
 
-from sqlalchemy import DateTime, Enum, Index, String, Text, UniqueConstraint, Uuid, text
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    Enum,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+    text,
+)
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -230,4 +243,34 @@ class Publication(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow
+    )
+
+
+class ModerationIdempotencyResponse(Base):
+    """幂等键 → 首次响应（状态码 + body）。
+
+    实体上的 key 列只够判断「是不是同一个请求」；重放时实体可能已经被后续
+    状态流转改过（publish→unpublish、claim→租约回收再领取），直接把当前
+    实体序列化出去就变成了「最新状态」，不是契约要求的「首次响应」。
+    所以这里按 (actor_id, scope, key) 存第一次成功的响应体，重放原样返回。
+    """
+
+    __tablename__ = "moderation_idempotency_responses"
+    __table_args__ = (
+        UniqueConstraint(
+            "actor_id", "scope", "key", name="uq_moderation_idempotency_actor_scope_key"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    actor_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False, index=True)
+    scope: Mapped[str] = mapped_column(String(20), nullable=False)
+    key: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    response_status: Mapped[int] = mapped_column(Integer, nullable=False)
+    response_body: Mapped[dict[str, Any]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
     )

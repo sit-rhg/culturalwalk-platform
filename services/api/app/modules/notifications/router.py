@@ -53,7 +53,6 @@ def list_notifications(
     "/{notification_id}/read",
     status_code=204,
     summary="标记通知已读（幂等）",
-    responses={200: {"description": "已经是已读状态（重复标记）"}},
 )
 def mark_notification_read(
     notification_id: uuid.UUID,
@@ -62,11 +61,11 @@ def mark_notification_read(
     request: Request,
     idempotency_key: IdempotencyKey,
 ) -> Response:
-    # 首次已读按契约回 204；重复标记回 200，让客户端能区分"这次改了"和"本来就已读"。
-    first_time = NotificationsService(db).mark_read(
+    # 契约只声明 204：重复标记同样返回 204，客户端不需要区分"本次改了"与"本来就已读"。
+    NotificationsService(db).mark_read(
         notification_id,
         user_id=_user_id_of(user),
         username=user.username,
         request_id=getattr(request.state, "request_id", None),
     )
-    return Response(status_code=204 if first_time else 200)
+    return Response(status_code=204)

@@ -172,7 +172,7 @@ cases:
     actor: editor
     scenario: claimed_own_task
     expected: 403
-    expect_code: CANNOT_REVIEW_OWN_SUBMISSION
+    expect_code: SELF_REVIEW_FORBIDDEN
     json: {action: approve}
     note: 审核员领了自己投的稿，做决定时必须被利益冲突拦下
 

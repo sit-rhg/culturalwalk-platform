@@ -48,6 +48,16 @@ def test_normal_user_forbidden(
     assert resp.json()["error"]["code"] == "FORBIDDEN"
 
 
+def test_editor_cannot_read_audit_logs(
+    client: TestClient, db_session: Session, editor_headers: dict[str, str]
+) -> None:
+    """编辑能审核、能录点位，但审计日志只给管理员看。"""
+    _seed(db_session)
+    resp = client.get("/api/v1/audit-logs", headers=editor_headers)
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "FORBIDDEN"
+
+
 def test_admin_sees_newest_first(
     client: TestClient, db_session: Session, admin_headers: dict[str, str]
 ) -> None:
@@ -103,14 +113,14 @@ def test_cursor_pagination(
     assert page2["items"][0]["id"] not in {item["id"] for item in page1["items"]}
 
 
-def test_bad_cursor_is_422(client: TestClient, admin_headers: dict[str, str]) -> None:
+def test_bad_cursor_is_400(client: TestClient, admin_headers: dict[str, str]) -> None:
     resp = client.get(
         "/api/v1/audit-logs",
         params={"cursor": "not-a-cursor"},
         headers=admin_headers,
     )
-    assert resp.status_code == 422
-    assert resp.json()["error"]["code"] == "VALIDATION_FAILED"
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "INVALID_CURSOR"
 
 
 def test_limit_is_capped(client: TestClient, admin_headers: dict[str, str]) -> None:

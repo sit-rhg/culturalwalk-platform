@@ -45,7 +45,10 @@ class RouteDayItemOut(BaseModel):
     start_time: str | None = None
     stay_minutes: int
     transport: str | None = None
-    place: PlaceDetailOut
+    # 地点在发布后下架/删除时条目仍保留（place=null、place_missing=true），
+    # 不让行程里突然少一站、position 出现空洞。
+    place: PlaceDetailOut | None = None
+    place_missing: bool = False
     price_min: int | None = None
     price_max: int | None = None
     # 快照里没有可信度字段（它挂在 place_facts 上），拿不到就不编：返回 null。

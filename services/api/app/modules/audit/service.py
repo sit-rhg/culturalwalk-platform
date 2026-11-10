@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 from datetime import UTC, datetime
@@ -19,7 +18,8 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.core.errors import ValidationFailed
+from app.core.errors import AppError
+from app.core.pagination import decode_payload, encode_payload
 from app.modules.audit.models import AuditLog
 from app.modules.audit.repository import AuditRepository
 from app.modules.audit.schemas import ActorOut, AuditLogOut, AuditPageOut
@@ -34,17 +34,20 @@ def _as_utc(value: datetime) -> datetime:
 
 
 def encode_cursor(row: AuditLog) -> str:
-    raw = f"{_as_utc(row.created_at).isoformat()}|{row.id}"
-    return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+    """游标复用 core.pagination：坏游标的错误码与其它列表必须一致（INVALID_CURSOR/400）。"""
+    return encode_payload({"c": _as_utc(row.created_at).isoformat(), "i": row.id})
 
 
 def decode_cursor(cursor: str) -> tuple[datetime, str]:
-    padded = cursor + "=" * (-len(cursor) % 4)
-    raw = base64.urlsafe_b64decode(padded.encode()).decode()
-    ts_text, _, row_id = raw.partition("|")
-    if not ts_text or not row_id:
-        raise ValueError("游标格式错误")
-    return datetime.fromisoformat(ts_text), row_id
+    data = decode_payload(cursor)
+    try:
+        created = datetime.fromisoformat(str(data["c"]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise AppError("分页游标无效", code="INVALID_CURSOR") from exc
+    row_id = data.get("i")
+    if not isinstance(row_id, str) or not row_id:
+        raise AppError("分页游标无效", code="INVALID_CURSOR")
+    return created, row_id
 
 
 class AuditService:
@@ -115,10 +118,7 @@ class AuditService:
         limit: int = DEFAULT_LIMIT,
     ) -> AuditPageOut:
         limit = max(1, min(limit, MAX_LIMIT))
-        try:
-            after = decode_cursor(cursor) if cursor else None
-        except ValueError as exc:
-            raise ValidationFailed("游标无效，请从头翻页") from exc
+        after = decode_cursor(cursor) if cursor else None
         rows, has_more = self.repo.page(
             object_type=object_type,
             object_id=object_id,
