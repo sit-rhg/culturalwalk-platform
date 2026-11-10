@@ -33,11 +33,20 @@ class Settings(BaseSettings):
     access_token_ttl_seconds: int = 900
     refresh_token_ttl_seconds: int = 14 * 24 * 3600
 
+    # 跨域：本地 vite 默认端口。部署到别的域名时用 CORS_ORIGINS（JSON 数组）覆盖，
+    # 不许把线上域名硬编码进代码。
+    cors_origins: list[str] = ["http://localhost:5173"]
+
     # 对象存储
+    # local = 落盘到 media_storage_root（只用于本机/演示）；s3 = 真对象存储。
+    # 演示与生产必须显式选 s3 并给密钥，否则上传地址是签给本地占位实现的，
+    # 前端拿着它上传会静默丢文件。
+    storage_backend: str = "local"  # local | s3
     s3_endpoint: str = "http://localhost:9000"
     s3_bucket: str = "culturalwalk"
-    s3_access_key: str = "minioadmin"
-    s3_secret_key: str = "minioadmin"
+    # 故意不再给 minioadmin 这类默认值：空串会让缺配置当场暴露，而不是用公开密钥跑起来。
+    s3_access_key: str = ""
+    s3_secret_key: str = ""
     media_max_bytes: int = 10 * 1024 * 1024
     # 本机对象存储根目录：扫描 worker 从这里读原件、写 clean 副本与缩略图。
     # 接真 MinIO/S3 时由对象存储读写适配器换实现，service 与 worker 不用改。
@@ -75,6 +84,16 @@ class Settings(BaseSettings):
             raise ValueError(
                 "非 local 环境必须通过 JWT_SECRET 提供至少 32 字符的独立密钥"
                 "（当前仍是仓库默认值，任何人都能伪造管理员令牌）"
+            )
+        if self.storage_backend != "s3":
+            raise ValueError(
+                "非 local 环境必须使用 STORAGE_BACKEND=s3；local 后端把文件落本机磁盘，"
+                "只适合开发与答辩演示"
+            )
+        if len(self.s3_access_key) < 8 or len(self.s3_secret_key) < 16:
+            raise ValueError(
+                "STORAGE_BACKEND=s3 必须提供 S3_ACCESS_KEY / S3_SECRET_KEY；"
+                "仓库里不再保留 minioadmin 这类公开默认值"
             )
         return self
 

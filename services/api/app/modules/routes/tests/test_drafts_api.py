@@ -139,6 +139,31 @@ def test_create_blank_title_is_422(client: TestClient, user_headers: dict) -> No
     assert response.json()["error"]["details"][0]["field"] == "title"
 
 
+def test_create_accepts_null_summary_and_duration(client: TestClient, user_headers: dict) -> None:
+    """契约把 summary / duration_minutes 标成可 null（B4），代码要真的能落 null。"""
+    body = _create(client, user_headers, summary=None, duration_minutes=None)
+    assert body["summary"] is None
+
+
+def test_create_idempotency_key_too_short_is_422(client: TestClient, user_headers: dict) -> None:
+    """契约 Idempotency-Key 为 8–64 字符（B4），太短要在入口 422。"""
+    response = client.post(
+        API,
+        json=_payload(),
+        headers={**user_headers, "Idempotency-Key": "short-7"},
+    )
+    assert response.status_code == 422
+
+
+def test_create_idempotency_key_too_long_is_422(client: TestClient, user_headers: dict) -> None:
+    response = client.post(
+        API,
+        json=_payload(),
+        headers={**user_headers, "Idempotency-Key": "k" * 65},
+    )
+    assert response.status_code == 422
+
+
 # ===== 列表 =====
 def test_list_only_returns_own_drafts(
     client: TestClient, user_headers: dict, admin_headers: dict

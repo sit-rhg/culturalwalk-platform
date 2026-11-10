@@ -86,6 +86,96 @@ def main() -> int:
     for path in unresolved:
         errors.append(f"path 定义不是对象：{path}")
 
+    # 6. 状态码覆盖：routes 模块（B3）
+    # 每个 operation 在代码/权限层可能返回的状态码，契约必须声明；
+    # 少一个就在这里报错，CI 的 contract job 会红。目前只接了 routes（WP-02 B3 范围）。
+    import ast
+
+    error_status = {
+        "Unauthorized": 401,
+        "Forbidden": 403,
+        "NotFound": 404,
+        "Conflict": 409,
+        "PreconditionFailed": 412,
+        "ValidationFailed": 422,
+        "ServiceUnavailable": 503,
+    }
+    for router_file in [ROOT / "services/api/app/modules/routes/router.py"]:
+        tree = ast.parse(router_file.read_text(encoding="utf-8"))
+        prefixes: dict[str, str] = {}
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
+                continue
+            call = node.value
+            if not (isinstance(call.func, ast.Name) and call.func.id == "APIRouter"):
+                continue
+            for kw in call.keywords:
+                if kw.arg == "prefix" and isinstance(kw.value, ast.Constant):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            prefixes[target.id] = str(kw.value.value)
+
+        for node in tree.body:
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for decorator in node.decorator_list:
+                if not (
+                    isinstance(decorator, ast.Call)
+                    and isinstance(decorator.func, ast.Attribute)
+                ):
+                    continue
+                owner, method = decorator.func.value, decorator.func.attr
+                if method not in HTTP_METHODS or not isinstance(owner, ast.Name):
+                    continue
+                prefix = prefixes.get(owner.id)
+                if prefix is None:
+                    continue
+                rel = (
+                    decorator.args[0].value
+                    if decorator.args and isinstance(decorator.args[0], ast.Constant)
+                    else ""
+                )
+                path = prefix + str(rel)
+                op = (paths.get(path) or {}).get(method)
+                if op is None:
+                    errors.append(f"{method.upper()} {path} 在契约里找不到对应操作")
+                    continue
+                declared = {
+                    int(code)
+                    for code in (op.get("responses") or {})
+                    if str(code).isdigit()
+                }
+                # 鉴权依赖一律 401；带路径参数的操作存在「不属于我 / 不存在」→ 403/404。
+                required: set[int] = {401}
+                if "{" in path:
+                    required |= {403, 404}
+                if op.get("requestBody"):
+                    required.add(422)
+                param_names = {
+                    p.get("name")
+                    for p in (op.get("parameters") or [])
+                    if isinstance(p, dict)
+                }
+                if "Idempotency-Key" in param_names:
+                    required.add(409)
+                if "If-Match" in param_names:
+                    required.add(412)
+                if method == "delete":
+                    required.add(204)
+                # handler 直接 raise 的错误类型也必须有声明。
+                for sub in ast.walk(node):
+                    if isinstance(sub, ast.Raise) and isinstance(sub.exc, ast.Call):
+                        func = sub.exc.func
+                        name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+                        if name in error_status:
+                            required.add(error_status[name])
+                for code in sorted(required - declared):
+                    errors.append(
+                        f"{method.upper()} {path} 契约缺状态码 {code}（代码或权限约定会返回）"
+                    )
+
+    # 7. B10：release 与投稿详情会返回 403/409（任务不属于我、状态不对），
+    # 契约必须声明；这两个操作不在 routes 路由范围内，单独点名断言。
     # 6. B10：release 与投稿详情会返回 403/409（任务不属于我、状态不对），
     # 契约必须声明；这两个操作不在 routes 路由范围内，单独点名断言。
     for path, method, required in (
