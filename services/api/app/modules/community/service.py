@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -290,8 +291,9 @@ class CommunityService:
         if len(matched) > limit:
             last = page[-1]
             next_cursor: str | None = _encode_route_cursor((last[3], last[2], last[0]), sort)
-        elif not exhausted and scan_after is not None and page:
-            # 还有候选没扫完（批次上限），游标指向本次扫到的位置，下一页继续。
+        elif not exhausted and scan_after is not None and scan_after != after:
+            # 批次上限用尽但仍有候选：游标指向已扫到的位置，下一页继续。
+            # 不能因为本页被筛空就返回 None——那会把后面的结果悄悄丢掉。
             next_cursor = _encode_route_cursor(scan_after, sort)
         else:
             next_cursor = None
@@ -347,7 +349,14 @@ class CommunityService:
             next_cursor=next_cursor,
         )
 
-    def create_comment(self, *, route_id: uuid.UUID, body: str, user: CurrentUser) -> CommentOut:
+    def create_comment(
+        self,
+        *,
+        route_id: uuid.UUID,
+        body: str,
+        user: CurrentUser,
+        idempotency_key: str | None = None,
+    ) -> CommentOut:
         self._require_published(route_id)
         cleaned = body.strip()
         if not cleaned:
@@ -360,9 +369,31 @@ class CommunityService:
                 "评论内容过长",
                 details=[{"field": "body", "reason": f"最多 {MAX_COMMENT_LENGTH} 字"}],
             )
-        comment = Comment(route_id=route_id, user_id=_actor_id(user), body=cleaned)
+        actor_id = _actor_id(user)
+        request_hash = hashlib.sha256(cleaned.encode()).hexdigest()
+        if idempotency_key is not None:
+            existing = self.repo.get_comment_by_idempotency(user_id=actor_id, key=idempotency_key)
+            if existing is not None:
+                return self._replay_comment(existing, request_hash)
+        comment = Comment(
+            route_id=route_id,
+            user_id=actor_id,
+            body=cleaned,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash if idempotency_key is not None else None,
+        )
         self.repo.add_comment(comment)
-        self.db.flush()
+        try:
+            self.db.flush()
+        except IntegrityError:
+            # 并发同 key：唯一约束让一个先落库，后到的回滚后回放赢家。
+            self.db.rollback()
+            if idempotency_key is None:
+                raise
+            winner = self.repo.get_comment_by_idempotency(user_id=actor_id, key=idempotency_key)
+            if winner is None:
+                raise
+            return self._replay_comment(winner, request_hash)
         self._audit(
             action="comment.create",
             object_type="comment",
@@ -371,6 +402,21 @@ class CommunityService:
             after={"route_id": str(route_id), "body": comment.body},
         )
         self.db.commit()
+        return self._comment_out(comment)
+
+    def _replay_comment(self, comment: Comment, request_hash: str) -> CommentOut:
+        """同 key 同 body 回放原评论；同 key 不同 body 报 409，不能悄悄换内容。"""
+        if comment.request_hash != request_hash:
+            raise Conflict(
+                "这个 Idempotency-Key 已经用于另一条评论，请换一个新的 key",
+                code="IDEMPOTENCY_KEY_REUSED",
+                details=[
+                    {
+                        "field": "Idempotency-Key",
+                        "reason": "already_used_with_different_body",
+                    }
+                ],
+            )
         return self._comment_out(comment)
 
     def pin_comment(self, *, comment_id: uuid.UUID, user: CurrentUser) -> CommentOut:
@@ -504,9 +550,10 @@ class CommunityService:
             try:
                 place = catalog.get_place(uuid.UUID(str(place_id)))
             except (NotFound, ValueError):
-                # 公开详情只展示已核验（verified）地点：草稿地点、已下架地点不出现，
-                # 也不因为「节点里有个无效 place_id」整条路线 500。
-                continue
+                # 公开详情只展示已核验（verified）地点：草稿地点、已下架地点不出现。
+                # 但条目要保留并标 place_missing，否则行程里突然少一站、position
+                # 出现空洞；也不因为「节点里有个无效 place_id」整条路线 500。
+                place = None
             items.append(
                 RouteDayItemOut(
                     position=_optional_int(node.get("position")) or index,
@@ -514,6 +561,7 @@ class CommunityService:
                     stay_minutes=_optional_int(node.get("stay_minutes")) or 0,
                     transport=_optional_str(node.get("transport")),
                     place=place,
+                    place_missing=place is None,
                     price_min=_optional_int(node.get("price_min")),
                     price_max=_optional_int(node.get("price_max")),
                     confidence=None,

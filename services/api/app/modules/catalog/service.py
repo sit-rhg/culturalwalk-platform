@@ -365,7 +365,9 @@ def _source_for(
     if not (title_text or url_text or (incoming.publisher or "").strip() or incoming.license):
         # 传了个空对象等于没填，别凭空造一行「未命名来源」。
         return None, False
-    title = title_text or url_text or "未命名来源"
+    # place_sources.title 只有 255 列宽，而 url 允许 2048：直接把长链接当标题
+    # 写库会在真实数据库上截断报错，所以只在标题长度内取用（去重键也用它）。
+    title = (title_text or url_text or "未命名来源")[:255]
     existing = service.repo.find_source(title=title, url=url_text or None)
     if existing is not None:
         # 老行缺授权信息时用新填的补上；已有值不覆盖（不拿新说法改历史记录）。

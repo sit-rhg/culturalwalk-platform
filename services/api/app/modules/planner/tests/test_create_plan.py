@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -21,6 +22,7 @@ from sqlalchemy.pool import StaticPool
 from app.core.db import Base, get_db
 from app.core.deps import create_access_token
 from app.main import create_app
+from app.modules.catalog.models import Place, PlaceStatus
 from app.modules.planner.models import Itinerary, PlanRun, PlanState
 
 API = "/api/v1/plans"
@@ -160,6 +162,34 @@ def test_出发地只填地名也能提交(
     assert itinerary.preferences["start_point"] == {
         "lat": None,
         "lon": None,
+        "label": "五一广场",
+    }
+
+
+def test_出发地只填地名时借同名点位坐标(
+    client: TestClient, auth: tuple[dict[str, str], str], session_factory: sessionmaker[Session]
+) -> None:
+    """前端没有地理编码：填的地名能在 catalog 里找到同名点位时，用它坐标参与排序。"""
+    headers, _ = auth
+    with session_factory() as db:
+        db.add(
+            Place(
+                name="五一广场",
+                lat=Decimal("28.193000"),
+                lon=Decimal("112.976000"),
+                status=PlaceStatus.VERIFIED,
+            )
+        )
+        db.commit()
+
+    response = client.post(API, json=_payload(start_point={"label": "五一广场"}), headers=headers)
+
+    assert response.status_code == 202, response.text
+    with session_factory() as db:
+        itinerary = db.scalars(select(Itinerary)).one()
+    assert itinerary.preferences["start_point"] == {
+        "lat": 28.193,
+        "lon": 112.976,
         "label": "五一广场",
     }
 

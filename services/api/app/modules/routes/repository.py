@@ -12,7 +12,7 @@ from sqlalchemy import and_, delete, func, or_, select, text, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
-from app.modules.routes.models import RouteDraft, RouteNode, RouteVersion
+from app.modules.routes.models import RouteDraft, RouteIdempotencyRecord, RouteNode, RouteVersion
 
 
 class RoutesRepository:
@@ -34,6 +34,23 @@ class RoutesRepository:
         stmt = select(RouteDraft).where(
             RouteDraft.owner_id == owner_id,
             RouteDraft.idempotency_key == idempotency_key,
+        )
+        return self.db.scalars(stmt).first()
+
+    def get_route_idempotency(
+        self,
+        *,
+        actor_id: uuid.UUID,
+        draft_id: uuid.UUID,
+        operation: str,
+        key: str,
+    ) -> RouteIdempotencyRecord | None:
+        """按 (操作者, 草稿, 操作, key) 取幂等记录；没有就返回 None。"""
+        stmt = select(RouteIdempotencyRecord).where(
+            RouteIdempotencyRecord.actor_id == actor_id,
+            RouteIdempotencyRecord.draft_id == draft_id,
+            RouteIdempotencyRecord.operation == operation,
+            RouteIdempotencyRecord.key == key,
         )
         return self.db.scalars(stmt).first()
 

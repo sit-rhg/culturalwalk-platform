@@ -81,12 +81,18 @@ def _day_parts(raw: object, *, lodging: bool = False) -> tuple[str, ...]:
     传了非法值时退回默认三段而不是 422：到这里请求早就校验过了，
     再报错只会让一次生成白等半天。空列表同样按默认处理（用户没表达意愿）。
     """
+    without_lodging = tuple(part for part in DEFAULT_DAY_PARTS if part != LODGING_PART)
     if isinstance(raw, list):
         wanted = [str(part) for part in raw if str(part) in SLOT_START]
         if wanted:
-            return tuple(sorted(wanted, key=DEFAULT_DAY_PARTS.index))
+            parts = tuple(sorted(wanted, key=DEFAULT_DAY_PARTS.index))
+            # 「晚上留给住宿」是更硬的约束：前端默认会带上全部三段，
+            # 不能因为 day_parts 里出现了 evening 就把住宿时段又排满观光。
+            if lodging:
+                parts = tuple(part for part in parts if part != LODGING_PART)
+            return parts or without_lodging
     if lodging:
-        return tuple(part for part in DEFAULT_DAY_PARTS if part != LODGING_PART)
+        return without_lodging
     return DEFAULT_DAY_PARTS
 
 

@@ -340,3 +340,18 @@ def test_add_fact_is_idempotent_per_key(
     with session_factory() as db:
         assert len(db.scalars(select(PlaceFact)).all()) == 1
         assert len(db.scalars(select(PlaceSource)).all()) == 1
+
+
+def test_url_only_source_title_fits_column(client: TestClient) -> None:
+    """只给链接时用它当标题，但列宽只有 255：长链接不能把写库撑爆（D7/D8）。"""
+    place = _create_place(client)
+    long_url = "https://example.edu.cn/" + "a" * 400
+
+    response = client.post(
+        f"{BASE}/{place['id']}/facts",
+        headers=_headers(),
+        json=_fact_payload(source={"url": long_url}),
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["sources"][0]["title"] == long_url[:255]

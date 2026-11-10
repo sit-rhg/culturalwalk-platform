@@ -72,6 +72,9 @@ describe('redirectTarget', () => {
   it('不把外层地址当回跳目标', () => {
     expect(redirectTarget('//evil.example.com')).toBe('/')
     expect(redirectTarget('https://evil.example.com')).toBe('/')
+    expect(redirectTarget('javascript:alert(1)')).toBe('/')
+    // 反斜杠会被浏览器归一成斜杠，等同于 //evil.example.com
+    expect(redirectTarget('/\\evil.example.com')).toBe('/')
     expect(redirectTarget('')).toBe('/')
   })
 })

@@ -76,33 +76,47 @@ def _payload() -> dict[str, object]:
     return {"city": "长沙", "days": 2, "people": 2, "budget_total": 100000}
 
 
-def test_non_uuid_idempotency_key_is_rejected(
+def test_non_uuid_idempotency_key_is_accepted(
     session_factory: sessionmaker[Session],
 ) -> None:
-    """契约写的是 format: uuid，实现只限了 8~64 字符——手搓 key 会撞车，必须 422。"""
+    """契约只要求 8~64 字符：`order-1-please` 这类手搓 key 必须能用，不能按 UUID 拒。"""
     with _client(session_factory) as client:
         response = client.post(
             API,
             json=_payload(),
             headers={**_auth(), "Idempotency-Key": "order-1-please"},
         )
+    assert response.status_code == 202, response.text
+
+
+def test_short_idempotency_key_is_rejected(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """短于 8 个字符的 key 撞车概率太高，必须 422 并指明字段。"""
+    with _client(session_factory) as client:
+        response = client.post(
+            API,
+            json=_payload(),
+            headers={**_auth(), "Idempotency-Key": "short"},
+        )
     assert response.status_code == 422, response.text
     detail = response.json()["error"]["details"][0]
     assert detail["field"] == "Idempotency-Key"
-    assert detail["reason"] == "需要一个 uuid"
+    assert detail["reason"]  # 具体文案由 FastAPI 的长度校验给出
 
 
-def test_uuid_idempotency_key_is_normalised(
+def test_same_non_uuid_key_returns_same_plan(
     session_factory: sessionmaker[Session],
 ) -> None:
-    """同一把 key 的大小写写法算同一把：第二次必须拿到同一张行程。"""
-    key = uuid.uuid4()
+    """同一把 key 提交两次必须拿到同一张行程：key 按原样当不透明字符串。"""
     headers = _auth()  # 同一个人提交两次，才谈得上幂等
     with _client(session_factory) as client:
         first = client.post(
-            API, json=_payload(), headers={**headers, "Idempotency-Key": str(key).upper()}
+            API, json=_payload(), headers={**headers, "Idempotency-Key": "order-0001"}
         )
-        second = client.post(API, json=_payload(), headers={**headers, "Idempotency-Key": str(key)})
+        second = client.post(
+            API, json=_payload(), headers={**headers, "Idempotency-Key": "order-0001"}
+        )
     assert first.status_code == second.status_code == 202
     assert first.json()["id"] == second.json()["id"]
 
@@ -144,6 +158,20 @@ def test_include_lodging_drops_evening_slot() -> None:
     ctx = PlannerAgent().run(_context(include_lodging=True))
     assert {entry["part"] for entry in ctx.schedule} <= {"morning", "afternoon"}
     assert len(ctx.schedule) == 2
+
+
+def test_include_lodging_wins_over_explicit_evening() -> None:
+    """前端默认带全三段 day_parts：勾了住宿时 evening 必须让位给酒店。"""
+    ctx = PlannerAgent().run(
+        _context(include_lodging=True, day_parts=["morning", "afternoon", "evening"])
+    )
+    assert {entry["part"] for entry in ctx.schedule} <= {"morning", "afternoon"}
+
+
+def test_explicit_evening_without_lodging_still_used() -> None:
+    """没勾住宿时用户自己选的 evening 仍然生效，不能被默认三段覆盖。"""
+    ctx = PlannerAgent().run(_context(day_parts=["evening"]))
+    assert {entry["part"] for entry in ctx.schedule} == {"evening"}
 
 
 def test_string_false_is_not_lodging() -> None:

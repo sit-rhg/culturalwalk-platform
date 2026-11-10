@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -58,7 +60,7 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173"],
+        allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -111,8 +113,47 @@ def create_app() -> FastAPI:
         return {"status": "ok", "version": "0.1.0"}
 
     app.include_router(api)
+    # 覆盖默认 openapi：把 Header 依赖翻译成契约里的 bearerAuth 安全声明。
+    app.openapi = lambda: _secured_openapi(app)  # type: ignore[method-assign]
     _mount_web(app)
     return app
+
+
+def _secured_openapi(app: FastAPI) -> dict[str, Any]:
+    """给需要登录的操作补 Bearer 安全声明。
+
+    FastAPI 从 `Header()` 依赖生成的是普通 `authorization` 参数，而不是
+    securitySchemes；契约里的写操作声明的是 `security: [{bearerAuth: []}]`。
+    不补这一步，前端按 openapi 生成代码时既看不到「哪些端点需要登录」，也会把
+    Authorization 当成调用方自己要拼的参数。
+    """
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
+    components = schema.setdefault("components", {})
+    components.setdefault("securitySchemes", {})["bearerAuth"] = {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+    }
+    for path_item in schema.get("paths", {}).values():
+        for operation in path_item.values():
+            if not isinstance(operation, dict):
+                continue
+            params = operation.get("parameters") or []
+            kept = [
+                param
+                for param in params
+                if not (
+                    param.get("in") == "header"
+                    and str(param.get("name", "")).lower() == "authorization"
+                )
+            ]
+            if len(kept) != len(params):
+                operation["parameters"] = kept
+                operation["security"] = [{"bearerAuth": []}]
+    app.openapi_schema = schema
+    return schema
 
 
 def _mount_web(app: FastAPI) -> None:

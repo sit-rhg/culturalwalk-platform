@@ -18,7 +18,8 @@ import { NAV_TABS } from '@/shared/nav'
 const PAGE_MARKERS = ['发现', '规划行程', '创作路线', '我的路线', '我的主页']
 
 async function renderAt(path: string): Promise<string> {
-  const router = createAppRouter(createMemoryHistory())
+  // 这里只关心「哪一页 + 哪个 tab」，登录守卫另有 guard.spec.ts；否则 /me 之类会被踢去登录页
+  const router = createAppRouter(createMemoryHistory(), { guarded: false })
   const app = createSSRApp(App)
   app.use(router)
   await router.push(path)
@@ -74,7 +75,7 @@ describe('底部导航（FE-01）', () => {
       ['/routes/1', 'browse'],
       ['/authoring/1', 'authoring'],
     ] as const) {
-      const router = createAppRouter(createMemoryHistory())
+      const router = createAppRouter(createMemoryHistory(), { guarded: false })
       await router.push(path)
       expect(router.currentRoute.value.meta.nav).toBe(nav)
     }

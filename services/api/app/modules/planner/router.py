@@ -45,20 +45,18 @@ def _request_id(request: Request) -> str | None:
 
 
 def _idempotency_key(raw: str) -> str:
-    """按契约把 Idempotency-Key 收成 UUID 字符串。
+    """按契约规整 Idempotency-Key：去空白并校验 8–64 个字符。
 
-    头参数只限了长度，但契约（docs/api/openapi.yaml 的 IdempotencyKey）写的是
-    format: uuid。放开格式会让 `order-1` 这种手搓 key 混进来：两个客户端撞同一把
-    key 时，第二个请求会拿到第一个的行程，看起来像"提交成功了但内容不对"。
-    转成标准小写形式再入库，避免 `ABC` 与 `abc` 被当成两把 key。
+    契约只声明长度（docs/api/openapi.yaml 的 IdempotencyKey），不要求 UUID：
+    强制 UUID 会把契约允许的 `order-1` 这类 key 判成 422，前后端口径也会打架。
     """
-    try:
-        return str(uuid.UUID(raw.strip()))
-    except ValueError as exc:
+    key = raw.strip()
+    if not 8 <= len(key) <= 64:
         raise ValidationFailed(
-            "Idempotency-Key 必须是 UUID",
-            details=[{"field": "Idempotency-Key", "reason": "需要一个 uuid"}],
-        ) from exc
+            "Idempotency-Key 长度必须是 8-64 个字符",
+            details=[{"field": "Idempotency-Key", "reason": "长度必须是 8-64"}],
+        )
+    return key
 
 
 @router.post(

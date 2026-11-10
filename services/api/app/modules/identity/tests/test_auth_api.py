@@ -17,6 +17,8 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import create_access_token
 from app.core.errors import Conflict
+from app.modules.audit.models import AuditLog
+from app.modules.identity import service as identity_service
 from app.modules.identity.models import STATUS_DISABLED, User, utcnow
 from app.modules.identity.models import Session as LoginSession
 from app.modules.identity.repository import IdentityRepository
@@ -39,6 +41,11 @@ def _register(client: TestClient, username: str = "Ming", password: str = PASSWO
 
 def _bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def _logout_headers(token: str) -> dict[str, str]:
+    """契约把 Idempotency-Key 声明成 logout 的必填头，测试也照契约发。"""
+    return {**_bearer(token), "Idempotency-Key": "logout-key-0001"}
 
 
 def _precheck_missed(self: IdentityRepository, username: str) -> User | None:
@@ -168,7 +175,7 @@ def test_refresh_race_loses_at_the_conditional_revoke(
 def test_logout_needs_no_body_and_revokes_current_session(client: TestClient) -> None:
     """契约的 /auth/logout 没有请求体：只凭 access 令牌里的 sid 定位该退哪一次会话。"""
     tokens = _register(client, username="ming")
-    resp = client.post(LOGOUT, headers=_bearer(tokens["access_token"]))
+    resp = client.post(LOGOUT, headers=_logout_headers(tokens["access_token"]))
     assert resp.status_code == 204, resp.text
 
     again = client.post(REFRESH, json={"refresh_token": tokens["refresh_token"]})
@@ -182,7 +189,7 @@ def test_logout_frees_only_the_current_session(client: TestClient) -> None:
     pad = client.post(LOGIN, json={"username": "ming", "password": PASSWORD}).json()
     assert pad["refresh_token"] != phone["refresh_token"]
 
-    resp = client.post(LOGOUT, headers=_bearer(phone["access_token"]))
+    resp = client.post(LOGOUT, headers=_logout_headers(phone["access_token"]))
     assert resp.status_code == 204, resp.text
 
     gone = client.post(REFRESH, json={"refresh_token": phone["refresh_token"]})
@@ -195,7 +202,7 @@ def test_logout_is_idempotent(client: TestClient) -> None:
     """重复退出仍是 204，不因为会话已撤销就翻脸。"""
     tokens = _register(client, username="ming")
     for _ in range(2):
-        resp = client.post(LOGOUT, headers=_bearer(tokens["access_token"]))
+        resp = client.post(LOGOUT, headers=_logout_headers(tokens["access_token"]))
         assert resp.status_code == 204, resp.text
 
 
@@ -204,13 +211,13 @@ def test_logout_without_sid_revokes_every_session(client: TestClient) -> None:
     tokens = _register(client, username="ming")
     legacy = create_access_token(user_id=tokens["user"]["id"], username="ming", role="user")
 
-    assert client.post(LOGOUT, headers=_bearer(legacy)).status_code == 204
+    assert client.post(LOGOUT, headers=_logout_headers(legacy)).status_code == 204
     gone = client.post(REFRESH, json={"refresh_token": tokens["refresh_token"]})
     assert gone.status_code == 401, gone.text
 
 
 def test_logout_without_token_is_unauthorized(client: TestClient) -> None:
-    assert client.post(LOGOUT).status_code == 401
+    assert client.post(LOGOUT, headers={"Idempotency-Key": "logout-key-0002"}).status_code == 401
 
 
 def test_me_without_token_is_unauthorized(client: TestClient) -> None:
@@ -337,3 +344,50 @@ def test_duplicate_email_race_still_reports_email(
     resp = client.post(REGISTER, json=second)
     assert resp.status_code == 409, resp.text
     assert resp.json()["error"]["message"] == "这个邮箱已经被注册了"
+
+
+def test_logout_audits_only_the_first_revocation(client: TestClient, db_session: Session) -> None:
+    """重复退出仍是 204，但审计只该记一条「这次真的撤了」。"""
+    tokens = _register(client, username="logoutaudit")
+    headers = _logout_headers(tokens["access_token"])
+
+    assert client.post(LOGOUT, headers=headers).status_code == 204
+    assert client.post(LOGOUT, headers=headers).status_code == 204
+
+    actions = db_session.scalars(
+        select(AuditLog.action).where(AuditLog.action == "auth.logout")
+    ).all()
+    assert list(actions) == ["auth.logout"]
+
+
+def test_refresh_replay_revokes_the_whole_family(client: TestClient) -> None:
+    """旧 refresh 被重放 = 令牌可能泄露：撤销该用户全部会话，新令牌一起失效。"""
+    tokens = _register(client, username="reuse")
+    rotated = client.post(REFRESH, json={"refresh_token": tokens["refresh_token"]})
+    assert rotated.status_code == 200, rotated.text
+
+    replay = client.post(REFRESH, json={"refresh_token": tokens["refresh_token"]})
+    assert replay.status_code == 401, replay.text
+    assert replay.json()["error"]["code"] == "UNAUTHORIZED"
+
+    after = client.post(REFRESH, json={"refresh_token": rotated.json()["refresh_token"]})
+    assert after.status_code == 401, "家族已撤销，攻击者手里的新令牌也不能继续用"
+
+
+def test_login_unknown_user_still_runs_the_password_hash(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """未知用户也要做一次 argon2，否则响应耗时能区分「账号存在吗」。"""
+    calls: list[str] = []
+    original = identity_service.verify_password
+
+    def spy(hashed: str, password: str) -> bool:
+        calls.append(hashed)
+        return original(hashed, password)
+
+    monkeypatch.setattr(identity_service, "verify_password", spy)
+
+    resp = client.post(LOGIN, json={"username": "nobody-here", "password": "password123"})
+
+    assert resp.status_code == 401
+    assert calls, "未知用户分支必须先跑一次 dummy 校验"

@@ -139,6 +139,31 @@ def test_create_blank_title_is_422(client: TestClient, user_headers: dict) -> No
     assert response.json()["error"]["details"][0]["field"] == "title"
 
 
+def test_create_accepts_null_summary_and_duration(client: TestClient, user_headers: dict) -> None:
+    """契约把 summary / duration_minutes 标成可 null（B4），代码要真的能落 null。"""
+    body = _create(client, user_headers, summary=None, duration_minutes=None)
+    assert body["summary"] is None
+
+
+def test_create_idempotency_key_too_short_is_422(client: TestClient, user_headers: dict) -> None:
+    """契约 Idempotency-Key 为 8–64 字符（B4），太短要在入口 422。"""
+    response = client.post(
+        API,
+        json=_payload(),
+        headers={**user_headers, "Idempotency-Key": "short-7"},
+    )
+    assert response.status_code == 422
+
+
+def test_create_idempotency_key_too_long_is_422(client: TestClient, user_headers: dict) -> None:
+    response = client.post(
+        API,
+        json=_payload(),
+        headers={**user_headers, "Idempotency-Key": "k" * 65},
+    )
+    assert response.status_code == 422
+
+
 # ===== 列表 =====
 def test_list_only_returns_own_drafts(
     client: TestClient, user_headers: dict, admin_headers: dict
@@ -318,6 +343,32 @@ def test_patch_replay_returns_original_after_draft_locked(
     assert replay.status_code == 200
     assert replay.json()["title"] == "一次"
     assert replay.json()["lock_version"] == 2
+
+
+def test_patch_retry_old_key_after_newer_write(client: TestClient, user_headers: dict) -> None:
+    """K1 成功、K2 成功之后再重试 K1：必须还 K1 的首次响应，而不是 412/回退。
+
+    单槽列只记得最近的 K2，旧实现会判 412 或把标题改回旧值；这张用例钉住
+    「每个 key 各自存历史」的语义。
+    """
+    draft = _create(client, user_headers)
+    first_key = _key()
+    second_key = _key()
+    first = _patch(client, user_headers, draft["id"], if_match=1, key=first_key, title="一次")
+    assert first.status_code == 200
+    second = _patch(client, user_headers, draft["id"], if_match=2, key=second_key, title="二次")
+    assert second.status_code == 200
+
+    # If-Match 故意带当前版本（3）：重放不校验版本，只按 key 还原首次响应。
+    replay = _patch(client, user_headers, draft["id"], if_match=3, key=first_key, title="一次")
+    assert replay.status_code == 200
+    assert replay.json()["title"] == "一次"
+    assert replay.json()["lock_version"] == 2, "重放的是 K1 那次的响应快照"
+
+    # 重放不能把草稿本体改回旧值：再读详情，标题仍是 K2 写入的「二次」。
+    detail = client.get(f"{API}/{draft['id']}", headers=user_headers).json()
+    assert detail["title"] == "二次"
+    assert detail["lock_version"] == 3
 
 
 # ===== 删除 =====

@@ -70,6 +70,29 @@ export function buildRouteQuery(
   return params.toString()
 }
 
+/** 深链 ?theme=xxx：重复参数取第一个，空白当没选，非字符串一律忽略。 */
+export function themeFromQuery(raw: unknown): string {
+  const value = Array.isArray(raw) ? raw[0] : raw
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+/**
+ * 点主题 chip 时写回地址栏的 query：其它参数原样保留，theme 为空就删掉，
+ * 这样刷新 / 分享链接都能还原同一个筛选。history 由调用方用 replace 控制。
+ */
+export function queryWithTheme(
+  query: Record<string, string | (string | null)[] | null | undefined>,
+  theme: string,
+): Record<string, string | (string | null)[]> {
+  const next: Record<string, string | (string | null)[]> = {}
+  for (const [key, value] of Object.entries(query)) {
+    if (key === 'theme' || value == null) continue
+    next[key] = value
+  }
+  if (theme) next.theme = theme
+  return next
+}
+
 /**
  * 把已加载路线的 theme_tags 汇总成筛选 chip：出现次数多的在前，最多 10 个。
  * 已选中的主题一定保留，否则选完之后 chip 消失，用户无法取消选择。

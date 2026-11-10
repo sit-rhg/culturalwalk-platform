@@ -79,7 +79,7 @@ def test_repeat_mark_read_is_idempotent(
 
     repeated = client.post(f"{ENDPOINT}/{notification_id}/read", headers=_headers(me))
 
-    assert repeated.status_code == 200
+    assert repeated.status_code == 204
     assert repeated.content == b""
     second_read_at = client.get(ENDPOINT, headers=_headers(me, with_key=False)).json()["items"][0][
         "read_at"

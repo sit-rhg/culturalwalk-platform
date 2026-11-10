@@ -14,8 +14,8 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "0017_planner_agent_step_unique"
-down_revision: str | Sequence[str] | None = "0016_idempotency"
+revision: str = "0020_planner_agent_step_unique"
+down_revision: str | Sequence[str] | None = "0019_comment_idempotency"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
