@@ -180,7 +180,12 @@ def create_comment(
     db: DbDep,
     idempotency_key: IdempotencyKey = None,
 ) -> CommentOut:
-    return CommunityService(db).create_comment(route_id=route_id, body=payload.body, user=user)
+    return CommunityService(db).create_comment(
+        route_id=route_id,
+        body=payload.body,
+        user=user,
+        idempotency_key=idempotency_key,
+    )
 
 
 @_comments_router.post("/{comment_id}/pin", summary="作者置顶评论", response_model=CommentOut)

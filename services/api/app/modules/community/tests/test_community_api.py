@@ -596,6 +596,38 @@ def test_unknown_audience_query_is_422(client: TestClient) -> None:
     assert response.json()["error"]["code"] == "VALIDATION_FAILED"
 
 
+def test_comment_replay_with_same_key_returns_same_row(
+    client: TestClient, db_session: Session, user_headers: dict[str, str]
+) -> None:
+    """同 key 同 body 重试：回放首次评论，不插第二行（B12）。"""
+    route_id = _published_route(db_session)
+    url = f"{ROUTES_API}/{route_id}/comments"
+    headers = {**user_headers, "Idempotency-Key": _key()}
+
+    first = client.post(url, json={"body": "同一条评论只写一次"}, headers=headers)
+    assert first.status_code == 201, first.text
+    replay = client.post(url, json={"body": "同一条评论只写一次"}, headers=headers)
+    assert replay.status_code == 201, replay.text
+    assert replay.json()["id"] == first.json()["id"]
+
+    listed = client.get(url).json()["items"]
+    assert [item["id"] for item in listed] == [first.json()["id"]]
+
+
+def test_comment_same_key_different_body_is_409(
+    client: TestClient, db_session: Session, user_headers: dict[str, str]
+) -> None:
+    """同 key 换内容：409 IDEMPOTENCY_KEY_REUSED，不能悄悄复用首次结果。"""
+    route_id = _published_route(db_session)
+    url = f"{ROUTES_API}/{route_id}/comments"
+    headers = {**user_headers, "Idempotency-Key": _key()}
+
+    assert client.post(url, json={"body": "第一次的内容"}, headers=headers).status_code == 201
+    conflict = client.post(url, json={"body": "换了内容"}, headers=headers)
+    assert conflict.status_code == 409
+    assert conflict.json()["error"]["code"] == "IDEMPOTENCY_KEY_REUSED"
+
+
 def test_scan_batch_cap_returns_continuation_cursor(
     client: TestClient,
     db_session: Session,
