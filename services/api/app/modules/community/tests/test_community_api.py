@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.modules.audit.models import AuditLog
@@ -305,9 +305,33 @@ def test_route_detail_days_and_etag(client: TestClient, db_session: Session) -> 
     assert item["place"]["name"] == "岳麓书院"
     assert (item["price_min"], item["price_max"]) == (1000, 2000)
     etag = response.headers["ETag"]
+    assert response.headers["Cache-Control"] == "public, max-age=60"
     cached = client.get(f"{ROUTES_API}/{route_id}", headers={"If-None-Match": etag})
     assert cached.status_code == 304
     assert cached.content == b""
+    assert cached.headers["ETag"] == etag
+    assert cached.headers["Cache-Control"] == "public, max-age=60"
+
+
+def test_route_list_sets_etag_and_serves_304(client: TestClient, db_session: Session) -> None:
+    """列表也带 ETag/Cache-Control；内容没变时 304，不用重复下载一页。"""
+    _published_route(db_session)
+
+    first = client.get(ROUTES_API)
+    assert first.status_code == 200
+    etag = first.headers["ETag"]
+    assert etag.startswith('"')
+    assert first.headers["Cache-Control"] == "public, max-age=60"
+
+    cached = client.get(ROUTES_API, headers={"If-None-Match": etag})
+    assert cached.status_code == 304
+    assert cached.content == b""
+    assert cached.headers["ETag"] == etag
+
+    # 换一种筛选（内容不同）必须换标签，否则会拿到上一页的缓存。
+    other = client.get(ROUTES_API, params={"q": "不存在的路线"})
+    assert other.status_code == 200
+    assert other.headers["ETag"] != etag
 
 
 def test_versions_require_login_and_published(
@@ -602,3 +626,21 @@ def test_comment_same_key_different_body_is_409(
     conflict = client.post(url, json={"body": "换了内容"}, headers=headers)
     assert conflict.status_code == 409
     assert conflict.json()["error"]["code"] == "IDEMPOTENCY_KEY_REUSED"
+
+
+def test_detail_keeps_missing_place_as_placeholder(client: TestClient, db_session: Session) -> None:
+    """发布后地点被删除：条目仍留在行程里，place 为空并标 place_missing。"""
+    place_id = _place(db_session)
+    route_id = _published_route(db_session, place_id=place_id)
+
+    db_session.execute(delete(Place).where(Place.id == place_id))
+    db_session.commit()
+
+    response = client.get(f"{ROUTES_API}/{route_id}")
+    assert response.status_code == 200, response.text
+    items = response.json()["days"][0]["items"]
+    assert len(items) == 1
+    assert items[0]["position"] == 1
+    assert items[0]["place"] is None
+    assert items[0]["place_missing"] is True
+

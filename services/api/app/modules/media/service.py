@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import uuid
 from datetime import UTC, datetime
@@ -29,7 +30,12 @@ from app.core.config import settings
 from app.core.deps import CurrentUser
 from app.core.errors import AppError, Conflict, Forbidden, NotFound, Unauthorized
 from app.modules.audit import service as audit
-from app.modules.media.adapters.objects import ObjectNotFound, ObjectStore
+from app.modules.media.adapters.objects import (
+    ObjectNotFound,
+    ObjectStore,
+    ObjectStoreRejected,
+    get_object_store,
+)
 from app.modules.media.adapters.storage import (
     StorageSigner,
     default_upload_expiry,
@@ -42,6 +48,8 @@ from app.modules.media.schemas import MediaAssetOut, MediaIntentIn, MediaIntentO
 
 # 能看别人媒体的角色（编辑端排障）；普通用户只能看自己上传的。
 _REVIEWER_ROLES = frozenset({"admin", "editor"})
+
+logger = logging.getLogger(__name__)
 
 _UNSAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -410,6 +418,21 @@ class MediaService:
             after_hash=audit.AuditService.digest({"deleted_at": asset.deleted_at}),
             request_id=request_id,
         )
+        self._delete_objects(asset.object_key)
+
+    def _delete_objects(self, key: str) -> None:
+        """软删之后清掉对象存储里的字节（原件 + 扫描生成的缩略图）。
+
+        库里标了 deleted_at、桶里还留着文件，用户以为删干净了、实际还能被枚举到；
+        目录里尤其明显（答辩时拿文件管理器一翻就看见）。删除失败只记日志：
+        数据库状态已经是对的，不该因为对象存储抖动把 204 变成 500。
+        """
+        store = get_object_store()
+        for target in (key, f"{key}.thumb.webp"):
+            try:
+                store.delete(target)
+            except (ObjectNotFound, ObjectStoreRejected) as exc:
+                logger.warning("媒体对象删除失败：%s（%s）", target, exc)
 
     # ---------- 出参 ----------
 

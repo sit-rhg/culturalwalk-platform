@@ -114,16 +114,10 @@ class RouteDraft(Base):
     # 乐观锁：每次 PATCH 成功 +1；客户端用 If-Match 带回来，不匹配 412。
     lock_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     base_version_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
-    # 幂等（docs/03 §1.2）。POST 用一个 key 建草稿；PATCH 的 key 单独存，
-    # 否则第二次 PATCH 会把创建时的 key 覆盖掉，创建请求重试就查不到原草稿。
+    # 幂等（docs/03 §1.2）。POST 用一个 key 建草稿；PATCH/PUT 的 key 历史
+    # 存到 route_idempotency_records，单列只记最近一次会丢 K1，见那张表的注释。
     idempotency_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     input_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    patch_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    patch_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    # PUT /{id}/nodes 的幂等键单独一列：它和 PATCH 是两类写操作，
-    # 混用同一列会让「先 PATCH 再 PUT」的重放判断互相覆盖。
-    nodes_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    nodes_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )
@@ -137,6 +131,43 @@ class RouteDraft(Base):
         cascade="all, delete-orphan",
         order_by="RouteNode.position",
         passive_deletes=True,
+    )
+
+
+class RouteIdempotencyRecord(Base):
+    """PATCH/PUT 的幂等历史：按 key 存首次响应，24h 内重放原样奉还。
+
+    为什么单独建表：route_drafts 的单列只能记住「最近一次」的 key。用户先 K1
+    再 K2，之后重试 K1 时单列已经不认识 K1，只能回 412 或把内容改回旧值。
+    这张表按 (actor, draft, operation, key) 存每次写的响应快照，各 key 互不覆盖。
+    """
+
+    __tablename__ = "route_idempotency_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "actor_id",
+            "draft_id",
+            "operation",
+            "key",
+            name="uq_route_idempotency_actor_draft_op_key",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    actor_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False, index=True)
+    draft_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("route_drafts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # patch / nodes：两类写的响应形状不同，重放时按 operation 还原对应模型。
+    operation: Mapped[str] = mapped_column(String(16), nullable=False)
+    key: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    response_status: Mapped[int] = mapped_column(Integer, nullable=False, default=200)
+    response_body: Mapped[dict[str, Any]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
     )
 
 

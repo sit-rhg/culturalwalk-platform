@@ -1,6 +1,6 @@
 """community: 评论写接口按 Idempotency-Key 去重（B12）
 
-Revision ID: 0017_comment_idempotency
+Revision ID: 0019_comment_idempotency
 Revises: 0016_idempotency
 Create Date: 2026-11-08
 
@@ -17,8 +17,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0017_comment_idempotency"
-down_revision: str | Sequence[str] | None = "0016_idempotency"
+revision: str = "0019_comment_idempotency"
+down_revision: str | Sequence[str] | None = "0018_moderation_idempotency"
 branch_labels: Sequence[str] | None = None
 depends_on: Sequence[str] | None = None
 

@@ -7,12 +7,13 @@
 from __future__ import annotations
 
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, Header, Response, status
 
 from app.core.db import DbDep
 from app.core.deps import CurrentUser, CurrentUserDep, LogoutUserDep
-from app.core.errors import Unauthorized
+from app.core.errors import NotFound, Unauthorized
 from app.modules.identity.schemas import (
     LoginIn,
     RefreshIn,
@@ -31,6 +32,13 @@ users_router = APIRouter(prefix="/users", tags=["users"])
 router = APIRouter()
 router.include_router(auth_router)
 router.include_router(users_router)
+
+# 契约把 IdempotencyKey 声明成 logout 的必填头；退出本身也是写操作，
+# 和其他写端点保持同一个口径（8..64 字符，不打 uuid 的 format 擦边球）。
+IdempotencyKey = Annotated[
+    str,
+    Header(alias="Idempotency-Key", min_length=8, max_length=64, description="幂等键"),
+]
 
 
 def _tokens_out(issued: IssuedTokens) -> TokenPairOut:
@@ -85,9 +93,13 @@ def _session_id_of(user: CurrentUser) -> uuid.UUID | None:
 
 
 @auth_router.post("/logout", status_code=status.HTTP_204_NO_CONTENT, summary="退出登录")
-def logout(user: LogoutUserDep, db: DbDep) -> Response:
+def logout(user: LogoutUserDep, db: DbDep, idempotency_key: IdempotencyKey) -> Response:
     # 契约里 logout 没有请求体：退哪一次会话完全由令牌里的 sid 决定
-    IdentityService(db).logout(user_id=_user_id_of(user), session_id=_session_id_of(user))
+    IdentityService(db).logout(
+        user_id=_user_id_of(user),
+        session_id=_session_id_of(user),
+        idempotency_key=idempotency_key,
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -104,6 +116,11 @@ def me(user: CurrentUserDep, db: DbDep) -> UserOut:
     response_model_exclude_none=True,
     summary="用户公开主页",
 )
-def profile(user_id: uuid.UUID, db: DbDep) -> UserProfileOut:
+def profile(user_id: str, db: DbDep) -> UserProfileOut:
     # 契约写的是 security: []，所以这里一个令牌依赖都不挂：匿名也要能看。
-    return IdentityService(db).profile(user_id)
+    # 路径参数按 UUID 解析：非法 id 与"不存在"一样回 404，别让 422 泄露这是格式问题。
+    try:
+        parsed = uuid.UUID(user_id)
+    except ValueError as exc:
+        raise NotFound("用户不存在") from exc
+    return IdentityService(db).profile(parsed)

@@ -12,6 +12,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from app.modules.moderation.models import (
+    ModerationIdempotencyResponse,
     Publication,
     PublicationState,
     ReviewTask,
@@ -38,6 +39,14 @@ class ModerationRepository:
         stmt = select(Submission).where(
             Submission.draft_id == draft_id,
             Submission.submit_key == key,
+        )
+        return self.db.scalars(stmt).first()
+
+    def get_submission_by_withdraw_key(self, *, draft_id: uuid.UUID, key: str) -> Submission | None:
+        """按撤回幂等键找「被撤回的那次投稿」；重投之后 latest 已经不是它。"""
+        stmt = select(Submission).where(
+            Submission.draft_id == draft_id,
+            Submission.withdraw_key == key,
         )
         return self.db.scalars(stmt).first()
 
@@ -243,3 +252,21 @@ class ModerationRepository:
             Publication.state == PublicationState.PUBLISHED,
         )
         return self.db.scalars(stmt).first()
+
+    # ===== 幂等重放快照 =====
+    def get_idempotency_response(
+        self, *, actor_id: uuid.UUID, scope: str, key: str
+    ) -> ModerationIdempotencyResponse | None:
+        stmt = select(ModerationIdempotencyResponse).where(
+            ModerationIdempotencyResponse.actor_id == actor_id,
+            ModerationIdempotencyResponse.scope == scope,
+            ModerationIdempotencyResponse.key == key,
+        )
+        return self.db.scalars(stmt).first()
+
+    def add_idempotency_response(
+        self, record: ModerationIdempotencyResponse
+    ) -> ModerationIdempotencyResponse:
+        self.db.add(record)
+        self.db.flush()
+        return record
