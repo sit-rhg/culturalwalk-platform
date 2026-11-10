@@ -43,6 +43,11 @@ class CommunityRepository:
     def get_comment(self, comment_id: uuid.UUID) -> Comment | None:
         return self.db.get(Comment, comment_id)
 
+    def get_comment_by_idempotency(self, *, user_id: uuid.UUID, key: str) -> Comment | None:
+        """同一用户同一个 Idempotency-Key 之前是否已经落过评论。"""
+        stmt = select(Comment).where(Comment.user_id == user_id, Comment.idempotency_key == key)
+        return self.db.scalars(stmt).first()
+
     def list_comments(
         self,
         *,

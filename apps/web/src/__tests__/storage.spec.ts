@@ -41,6 +41,21 @@ describe('有 localStorage 的环境（浏览器）', () => {
     expect(store.has('cw_user')).toBe(false)
   })
 
+  it('setItem 抛错（配额满）时先写后读仍能取到值', () => {
+    vi.stubGlobal('localStorage', {
+      // 写不进去的时候，localStorage 里根本没有这个键，getItem 只能返回 null
+      getItem: () => null,
+      setItem: () => {
+        throw new Error('QuotaExceededError')
+      },
+      removeItem: () => undefined,
+    })
+
+    writeItem('cw_quota_probe', 'kept')
+    // 值只落在内存里，读的时候必须回查内存，否则刚写进去的就被当成没写过
+    expect(readItem('cw_quota_probe')).toBe('kept')
+  })
+
   it('隐私模式下抛异常也不把页面带崩', () => {
     vi.stubGlobal('localStorage', {
       getItem: () => {

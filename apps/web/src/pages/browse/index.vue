@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { errorMessage as readError } from '@/api/adapters'
 import { fetchRoutePage } from '@/api/endpoints'
 import type { Schemas } from '@/api/types'
@@ -13,7 +14,9 @@ import {
   EMPTY_FILTERS,
   buildRouteQuery,
   hasActiveFilter,
+  queryWithTheme,
   rankThemes,
+  themeFromQuery,
 } from './filters'
 import type { BrowseFilters } from './filters'
 
@@ -21,7 +24,11 @@ import type { BrowseFilters } from './filters'
 const PAGE_SIZE = 6
 const SEARCH_DEBOUNCE_MS = 300
 
-const filters = ref<BrowseFilters>({ ...EMPTY_FILTERS })
+const route = useRoute()
+const router = useRouter()
+
+// 深链 /?theme=亲子：进页面就把筛选摆好，刷新或直接打开都不丢
+const filters = ref<BrowseFilters>({ ...EMPTY_FILTERS, theme: themeFromQuery(route.query.theme) })
 const searchInput = ref('')
 const items = ref<Schemas['RouteSummary'][]>([])
 const themePool = ref<string[]>([])
@@ -110,8 +117,20 @@ function clearFilters(): void {
 }
 
 function toggleTheme(tag: string): void {
-  filters.value.theme = filters.value.theme === tag ? '' : tag
+  const next = filters.value.theme === tag ? '' : tag
+  filters.value.theme = next
+  // 同步写回地址栏：用 replace 不往历史里堆，退一下还是上一条路
+  void router.replace({ query: queryWithTheme(route.query, next) })
 }
+
+// 浏览器前进/后退换了 ?theme 时（页面不重建）筛选也要跟着换
+watch(
+  () => route.query.theme,
+  (raw) => {
+    const theme = themeFromQuery(raw)
+    if (theme !== filters.value.theme) filters.value.theme = theme
+  },
+)
 
 function loadMore(): void {
   if (loadingMore.value || !nextCursor.value) return

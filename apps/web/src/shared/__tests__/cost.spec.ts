@@ -7,6 +7,12 @@ describe('costText：费用怎么说', () => {
     expect(costText({ min_total: 0, max_total: 0, unknown_count: 3 })).toBe('费用待核实')
   })
 
+  it('只有起价：说「起」，不把已知价格藏成待核实', () => {
+    expect(costText({ min_total: 4500, unknown_count: 2 })).toBe('¥45 起（2 个节点待核价）')
+    expect(costText({ min_total: 4500, unknown_count: 0 })).toBe('¥45 起')
+    expect(costText({ max_total: 12000, unknown_count: 0 })).toBe('≤¥120')
+  })
+
   it('全核过价：只给区间', () => {
     expect(costText({ min_total: 4500, max_total: 6000, unknown_count: 0 })).toBe('¥45-¥60')
   })

@@ -4,7 +4,14 @@ import { renderToString } from 'vue/server-renderer'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import type { Schemas } from '@/api/types'
 import RouteCard from '@/modules/route-card/index.vue'
-import { EMPTY_FILTERS, buildRouteQuery, hasActiveFilter, rankThemes } from '../filters'
+import {
+  EMPTY_FILTERS,
+  buildRouteQuery,
+  hasActiveFilter,
+  queryWithTheme,
+  rankThemes,
+  themeFromQuery,
+} from '../filters'
 
 describe('buildRouteQuery', () => {
   it('只有 limit 时不下发空筛选参数', () => {
@@ -43,6 +50,21 @@ describe('hasActiveFilter', () => {
     expect(hasActiveFilter({ ...EMPTY_FILTERS, duration: '0-120' })).toBe(true)
     expect(hasActiveFilter({ ...EMPTY_FILTERS, channel: 'user' })).toBe(true)
     expect(hasActiveFilter({ ...EMPTY_FILTERS, audience: 'senior' })).toBe(true)
+  })
+})
+
+describe('主题深链', () => {
+  it('进页面读 ?theme 初始化筛选，点 chip 写回 query', () => {
+    // 刷新 / 直接打开 /?theme=亲子
+    expect(themeFromQuery(' 亲子 ')).toBe('亲子')
+    expect(themeFromQuery(['亲子', '夜游'])).toBe('亲子')
+    expect(themeFromQuery(undefined)).toBe('')
+    expect(themeFromQuery([''])).toBe('')
+
+    // 点 chip：query 里出现 theme，其它参数原样保留
+    expect(queryWithTheme({ q: '书店', theme: '' }, '亲子')).toEqual({ q: '书店', theme: '亲子' })
+    // 再点一次取消：theme 从 query 里删掉，不留 ?theme=
+    expect(queryWithTheme({ q: '书店', theme: '亲子' }, '')).toEqual({ q: '书店' })
   })
 })
 

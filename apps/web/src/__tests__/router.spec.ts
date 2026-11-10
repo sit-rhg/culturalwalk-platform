@@ -14,13 +14,22 @@ function router() {
 }
 
 describe('路由表', () => {
-  it('八条业务路由都指到已存在的组件，且名字唯一', () => {
+  it('八条业务路由都指到真能加载的组件，且名字唯一', async () => {
     const r = router()
     const names = r.getRoutes().map((route) => route.name).filter(Boolean)
 
     expect(new Set(names).size).toBe(names.length)
     for (const path of ['/', '/routes/1', '/planner', '/authoring', '/submit', '/me', '/login', '/admin']) {
-      expect(r.resolve(path).matched.length, path).toBeGreaterThan(0)
+      const matched = r.resolve(path).matched
+      expect(matched.length, path).toBeGreaterThan(0)
+      const component = matched[matched.length - 1].components?.default
+      // 懒加载的页面必须真的 import 一次：路径写错时这里会 reject，
+      // 而不是靠 matched.length > 0 假装断言过。
+      const loaded =
+        typeof component === 'function'
+          ? await (component as () => Promise<{ default?: unknown }>)()
+          : component
+      expect(loaded, path).toBeTruthy()
     }
   })
 

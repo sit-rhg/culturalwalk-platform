@@ -14,7 +14,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
-from typing import Final
+from typing import Any, Final
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -23,6 +23,7 @@ from app.core.deps import CurrentUser
 from app.core.errors import Conflict, Forbidden, NotFound
 from app.core.pagination import DEFAULT_LIMIT, MAX_LIMIT, decode_cursor, encode_cursor
 from app.modules.audit import service as audit
+from app.modules.catalog.service import CatalogService
 from app.modules.planner.agents.base import PlaceSource, PlanContext
 from app.modules.planner.candidates import catalog_candidate_source
 from app.modules.planner.draft import (
@@ -305,6 +306,32 @@ class PlannerService:
         self.db = db
         self.repo = PlannerRepository(db)
 
+    def _resolved_preferences(self, payload: PlanIn) -> dict[str, Any]:
+        """把只填了地名的起点补成坐标。
+
+        契约允许 `start_point: {label}`，但排班要按距离排序就得有经纬度；前端
+        没有地理编码，于是按名字在已发布点位里找同名的一条，借它的坐标。
+        找不到就原样保留：宁可起点不生效，也不能悄悄换一个别的地点。
+        """
+        preferences = payload.preferences()
+        point = preferences.get("start_point")
+        if not isinstance(point, dict):
+            return preferences
+        lat, lon = point.get("lat"), point.get("lon")
+        if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
+            return preferences
+        label = str(point.get("label") or "").strip()
+        if not label:
+            return preferences
+        places, _ = CatalogService(self.db).list_places(q=label, limit=5)
+        match = next((place for place in places if place.name == label), None)
+        if match is None:
+            return preferences
+        return {
+            **preferences,
+            "start_point": {"lat": float(match.lat), "lon": float(match.lon), "label": label},
+        }
+
     def create_plan(
         self,
         *,
@@ -336,7 +363,7 @@ class PlannerService:
             days=payload.days,
             people=payload.people,
             budget_total=payload.budget_total,
-            preferences=payload.preferences(),
+            preferences=self._resolved_preferences(payload),
             # 显式给 DRAFT：列默认值要等 INSERT 才生效，状态机此刻读不到 None。
             state=PlanState.DRAFT,
             idempotency_key=idempotency_key,
@@ -648,10 +675,9 @@ class PlannerService:
     def cost_summary(self, itinerary: Itinerary) -> CostSummaryOut:
         """整份行程的费用汇总（契约 CostSummary）。"""
         days = self.repo.days_for_itinerary(itinerary.id)
-        total = summarize(
-            (item for day in days for item in day.items),
-            people=itinerary.people,
-        )
+        # 单价是每人票价：这里必须按全队人数乘，否则详情显示人均、闸门按总额，
+        # 两处口径对不上（3 人票 100 元时详情写 100、预算却扣 300）。
+        total = summarize((item for day in days for item in day.items), people=itinerary.people)
         return CostSummaryOut(
             min_total=total.min_total,
             max_total=total.max_total,
@@ -693,10 +719,9 @@ class PlannerService:
             days_plan.append(PlanDayOut(day_index=day.day_index, items=items))
 
         base = PlanOut.from_itinerary(itinerary, run_id=run.id if run is not None else None)
-        total = summarize(
-            (item for day in days for item in day.items),
-            people=itinerary.people,
-        )
+        # 单价是每人票价：这里必须按全队人数乘，否则详情显示人均、闸门按总额，
+        # 两处口径对不上（3 人票 100 元时详情写 100、预算却扣 300）。
+        total = summarize((item for day in days for item in day.items), people=itinerary.people)
         return PlanDetailOut(
             **base.model_dump(),
             steps=[PlanStepOut.model_validate(step) for step in steps],

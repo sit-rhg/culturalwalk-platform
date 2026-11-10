@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 创作页：左栏草稿列表，右栏节点编辑器。
 // 排序/删除/新增只改本地数组，点「保存」才一次性 PUT 回接口。
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import type { Schemas } from '@/api/types'
@@ -24,6 +24,7 @@ import {
   validateNodes,
 } from './draft'
 import type { EditableNode } from './draft'
+import { createDraftLoader } from './load'
 import { saveDraftNodes } from './save'
 
 type Draft = Schemas['RouteDraft']
@@ -47,6 +48,11 @@ const detailError = ref('')
 const saving = ref(false)
 const saveNotice = ref('')
 const savedSnapshot = ref('')
+
+/** 详情加载只认最后一次：切草稿时旧请求直接 abort，晚到的响应不会覆盖新草稿 */
+const draftLoader = createDraftLoader<DraftDetail>((id, signal) =>
+  api.get<DraftDetail>('/route-drafts/' + id, { signal }),
+)
 
 const createOpen = ref(false)
 const creating = ref(false)
@@ -112,16 +118,18 @@ async function loadDetail(id: string): Promise<void> {
   loadingDetail.value = true
   detailError.value = ''
   saveNotice.value = ''
-  try {
-    applyDetail(await api.get<DraftDetail>('/route-drafts/' + id))
-  } catch (error) {
-    detail.value = null
-    nodes.value = []
-    savedSnapshot.value = ''
-    detailError.value = errorText(error)
-  } finally {
-    loadingDetail.value = false
+  const result = await draftLoader.load(id)
+  // 已被更新的加载取代：状态交给那次加载收尾，这里一个字都不要改
+  if (!result) return
+  loadingDetail.value = false
+  if (result.ok) {
+    applyDetail(result.detail)
+    return
   }
+  detail.value = null
+  nodes.value = []
+  savedSnapshot.value = ''
+  detailError.value = errorText(result.error)
 }
 
 async function openDraft(id: string): Promise<void> {
@@ -277,6 +285,7 @@ watch(
   (id) => {
     if (typeof id === 'string' && id) void loadDetail(id)
     else {
+      draftLoader.cancel()
       detail.value = null
       nodes.value = []
       savedSnapshot.value = ''
@@ -285,6 +294,9 @@ watch(
     }
   },
 )
+
+// 离开页面时取消在途请求：组件都卸载了，响应回来也没人收
+onBeforeUnmount(() => draftLoader.cancel())
 </script>
 
 <template>

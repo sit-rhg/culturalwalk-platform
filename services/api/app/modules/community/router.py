@@ -8,10 +8,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Header, Query, Response, status
+from pydantic import BaseModel
 
 from app.core.db import DbDep
 from app.core.deps import CurrentUser, CurrentUserDep, OptionalUserDep
@@ -56,12 +59,28 @@ def _user_id_of(user: CurrentUser | None) -> uuid.UUID | None:
         raise Unauthorized("登录已失效，请重新登录") from exc
 
 
+# 公开读接口的缓存策略：内容随发布/收藏变化，60 秒足够兜住热点读。
+_CACHE_CONTROL = "public, max-age=60"
+
+
+def _payload_etag(payload: BaseModel) -> str:
+    """列表响应的 ETag：内容变了才换标签，游标/条数不同也算不同内容。"""
+    raw = json.dumps(
+        payload.model_dump(mode="json"),
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return f'"{hashlib.sha256(raw.encode()).hexdigest()[:32]}"'
+
+
 # ===== 公开路线浏览 =====
 
 
 @_routes_router.get("", summary="公开路线列表", response_model=RouteListOut)
 def list_routes(
     db: DbDep,
+    response: Response,
     q: Annotated[str | None, Query(description="标题/摘要关键字")] = None,
     theme: Annotated[str | None, Query(description="文化主题标签")] = None,
     audience: Annotated[
@@ -76,8 +95,9 @@ def list_routes(
         Query(description="默认 hot：收藏数倒序（同数看发布时间）；latest/oldest 按发布时间"),
     ] = "hot",
     cursor: Annotated[str | None, Query(description="上一页返回的 next_cursor")] = None,
+    if_none_match: Annotated[str | None, Header(alias="If-None-Match")] = None,
     limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
-) -> RouteListOut:
+) -> RouteListOut | Response:
     items, next_cursor = CommunityService(db).list_routes(
         q=q,
         theme=theme,
@@ -90,7 +110,13 @@ def list_routes(
         cursor=cursor,
         limit=limit,
     )
-    return RouteListOut(items=items, next_cursor=next_cursor)
+    payload = RouteListOut(items=items, next_cursor=next_cursor)
+    etag = _payload_etag(payload)
+    headers = {"ETag": etag, "Cache-Control": _CACHE_CONTROL}
+    if if_none_match is not None and if_none_match.strip() in {etag, etag.strip('"')}:
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+    response.headers.update(headers)
+    return payload
 
 
 @_routes_router.get("/{route_id}", summary="公开路线详情", response_model=RouteDetailOut)
@@ -103,9 +129,10 @@ def get_route(
 ) -> RouteDetailOut | Response:
     detail = CommunityService(db).get_route(route_id=route_id, viewer_id=_user_id_of(viewer))
     etag = f'"{detail.content_hash}"'
+    headers = {"ETag": etag, "Cache-Control": _CACHE_CONTROL}
     if if_none_match is not None and if_none_match.strip() in {etag, detail.content_hash}:
-        return Response(status_code=status.HTTP_304_NOT_MODIFIED)
-    response.headers["ETag"] = etag
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+    response.headers.update(headers)
     return detail
 
 
@@ -153,7 +180,12 @@ def create_comment(
     db: DbDep,
     idempotency_key: IdempotencyKey = None,
 ) -> CommentOut:
-    return CommunityService(db).create_comment(route_id=route_id, body=payload.body, user=user)
+    return CommunityService(db).create_comment(
+        route_id=route_id,
+        body=payload.body,
+        user=user,
+        idempotency_key=idempotency_key,
+    )
 
 
 @_comments_router.post("/{comment_id}/pin", summary="作者置顶评论", response_model=CommentOut)

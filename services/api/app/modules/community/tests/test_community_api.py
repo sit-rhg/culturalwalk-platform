@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.modules.audit.models import AuditLog
@@ -305,9 +305,33 @@ def test_route_detail_days_and_etag(client: TestClient, db_session: Session) -> 
     assert item["place"]["name"] == "岳麓书院"
     assert (item["price_min"], item["price_max"]) == (1000, 2000)
     etag = response.headers["ETag"]
+    assert response.headers["Cache-Control"] == "public, max-age=60"
     cached = client.get(f"{ROUTES_API}/{route_id}", headers={"If-None-Match": etag})
     assert cached.status_code == 304
     assert cached.content == b""
+    assert cached.headers["ETag"] == etag
+    assert cached.headers["Cache-Control"] == "public, max-age=60"
+
+
+def test_route_list_sets_etag_and_serves_304(client: TestClient, db_session: Session) -> None:
+    """列表也带 ETag/Cache-Control；内容没变时 304，不用重复下载一页。"""
+    _published_route(db_session)
+
+    first = client.get(ROUTES_API)
+    assert first.status_code == 200
+    etag = first.headers["ETag"]
+    assert etag.startswith('"')
+    assert first.headers["Cache-Control"] == "public, max-age=60"
+
+    cached = client.get(ROUTES_API, headers={"If-None-Match": etag})
+    assert cached.status_code == 304
+    assert cached.content == b""
+    assert cached.headers["ETag"] == etag
+
+    # 换一种筛选（内容不同）必须换标签，否则会拿到上一页的缓存。
+    other = client.get(ROUTES_API, params={"q": "不存在的路线"})
+    assert other.status_code == 200
+    assert other.headers["ETag"] != etag
 
 
 def test_versions_require_login_and_published(
@@ -570,3 +594,77 @@ def test_unknown_audience_query_is_422(client: TestClient) -> None:
     response = client.get(ROUTES_API, params={"audience": "famliy"})
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "VALIDATION_FAILED"
+
+
+def test_comment_replay_with_same_key_returns_same_row(
+    client: TestClient, db_session: Session, user_headers: dict[str, str]
+) -> None:
+    """同 key 同 body 重试：回放首次评论，不插第二行（B12）。"""
+    route_id = _published_route(db_session)
+    url = f"{ROUTES_API}/{route_id}/comments"
+    headers = {**user_headers, "Idempotency-Key": _key()}
+
+    first = client.post(url, json={"body": "同一条评论只写一次"}, headers=headers)
+    assert first.status_code == 201, first.text
+    replay = client.post(url, json={"body": "同一条评论只写一次"}, headers=headers)
+    assert replay.status_code == 201, replay.text
+    assert replay.json()["id"] == first.json()["id"]
+
+    listed = client.get(url).json()["items"]
+    assert [item["id"] for item in listed] == [first.json()["id"]]
+
+
+def test_comment_same_key_different_body_is_409(
+    client: TestClient, db_session: Session, user_headers: dict[str, str]
+) -> None:
+    """同 key 换内容：409 IDEMPOTENCY_KEY_REUSED，不能悄悄复用首次结果。"""
+    route_id = _published_route(db_session)
+    url = f"{ROUTES_API}/{route_id}/comments"
+    headers = {**user_headers, "Idempotency-Key": _key()}
+
+    assert client.post(url, json={"body": "第一次的内容"}, headers=headers).status_code == 201
+    conflict = client.post(url, json={"body": "换了内容"}, headers=headers)
+    assert conflict.status_code == 409
+    assert conflict.json()["error"]["code"] == "IDEMPOTENCY_KEY_REUSED"
+
+
+def test_scan_batch_cap_returns_continuation_cursor(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """筛选极严、候选又多时，批次上限不能把剩余结果静默丢掉。"""
+    for index in range(21):
+        _published_route(db_session, title=f"历史路线 {index}", theme_tags=["历史"])
+    monkeypatch.setattr("app.modules.community.service._MAX_SCAN_BATCHES", 1)
+
+    first = client.get(ROUTES_API, params={"theme": "美食", "limit": 1})
+    assert first.status_code == 200, first.text
+    body = first.json()
+    assert body["items"] == []
+    # 第一批 20 条全被筛掉，但还剩候选：必须给继续游标，而不是 None。
+    assert body["next_cursor"] is not None
+
+    second = client.get(
+        ROUTES_API, params={"theme": "美食", "limit": 1, "cursor": body["next_cursor"]}
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["items"] == []
+    assert second.json()["next_cursor"] is None
+
+
+def test_detail_keeps_missing_place_as_placeholder(client: TestClient, db_session: Session) -> None:
+    """发布后地点被删除：条目仍留在行程里，place 为空并标 place_missing。"""
+    place_id = _place(db_session)
+    route_id = _published_route(db_session, place_id=place_id)
+
+    db_session.execute(delete(Place).where(Place.id == place_id))
+    db_session.commit()
+
+    response = client.get(f"{ROUTES_API}/{route_id}")
+    assert response.status_code == 200, response.text
+    items = response.json()["days"][0]["items"]
+    assert len(items) == 1
+    assert items[0]["position"] == 1
+    assert items[0]["place"] is None
+    assert items[0]["place_missing"] is True
