@@ -286,6 +286,12 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RouteDraft" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/Validation"
 
   /route-drafts/{draft_id}:
     parameters:
@@ -299,6 +305,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RouteDraftDetail" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
@@ -320,15 +328,29 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RouteDraft" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
         "412":
           $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/Validation"
     delete:
       tags: [drafts]
       summary: 删除草稿（仅 EDITING 且从未发布）
       responses:
         "204": { description: 已删除 }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
 
@@ -357,6 +379,14 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RouteDraftDetail" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
         "412":
           $ref: "#/components/responses/PreconditionFailed"
         "422":
@@ -384,6 +414,12 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Submission" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
         "422":
@@ -402,6 +438,12 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RouteDraft" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
 
