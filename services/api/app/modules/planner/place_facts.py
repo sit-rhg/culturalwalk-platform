@@ -27,11 +27,13 @@ from app.modules.planner.pricing import UNVERIFIED
 
 @dataclass(frozen=True)
 class ClaimView:
-    """一条「说法」：内容 + 可信度 + 来源链接。"""
+    """一条「说法」：内容 + 可信度 + 来源（编号 + 链接）。"""
 
     claim: str
     confidence: str = UNVERIFIED
     source_urls: tuple[str, ...] = ()
+    # 来源编号（catalog.place_sources.id）。行程项落库要存的是它而不是 URL（D2）。
+    source_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -104,6 +106,24 @@ def _confidence_value(raw: Any) -> str:
     return text or UNVERIFIED
 
 
+def _source_ids_of(fact: Any) -> tuple[str, ...]:
+    """一条说法背后的来源编号。
+
+    两种形状都要认：ORM 的 `PlaceFact.source_id`（单条）和接口返回的
+    `sources[]`（数组）。编号是「这条说法查得到出处」的凭证，行程项要存它，
+    所以缺了就是缺了，不拿 URL 顶替（URL 会改版，编号不会）。
+    """
+    picked: list[str] = []
+    single = getattr(fact, "source_id", None)
+    if single is not None:
+        picked.append(str(single))
+    for source in getattr(fact, "sources", None) or []:
+        source_id = getattr(source, "id", None)
+        if source_id is not None and str(source_id) not in picked:
+            picked.append(str(source_id))
+    return tuple(picked)
+
+
 def _to_view(detail: Any) -> PlaceView:
     """把 catalog 的详情对象转成本模块的轻量结构。
 
@@ -119,6 +139,7 @@ def _to_view(detail: Any) -> PlaceView:
                 for source in (getattr(fact, "sources", None) or [])
                 if (url := getattr(source, "url", None))
             ),
+            source_ids=_source_ids_of(fact),
         )
         for fact in facts
     )

@@ -48,9 +48,11 @@ from app.modules.planner.place_facts import (
     catalog_place_source,
 )
 from app.modules.planner.pricing import (
+    LIKELY,
     REASON_PLACE_MISSING,
     REASON_UNKNOWN,
     UNVERIFIED,
+    VERIFIED,
     PriceQuote,
     quote_from_claims,
     summarize,
@@ -84,6 +86,11 @@ ERROR_PREVIEW_CHARS: Final[int] = 200
 # 流水线「跑通」但一个日程都没排出来：对用户等于没生成，必须按失败收口，
 # 否则会出现 READY + 空行程 + 0 元的假成功。
 PLAN_EMPTY_CODE: Final[str] = "PLAN_EMPTY"
+# 挑刺员报的「一定不能交付」的问题 → 落库的错误码。
+# 预算超了还标 READY，用户点开看到的是一份自己付不起的行程；其余问题
+# （走太远、排太满、同一点位重复）只留在 issues 里当提示，因为它们不影响
+# 「这份行程能不能看」，砍哪个点是用户的决定（D1）。
+BLOCKING_ISSUE_CODES: Final[dict[str, str]] = {"over_budget": "BUDGET_EXCEEDED"}
 
 # 状态机（docs/02 §3.5）：只有这三条边合法，表外的一切组合都拒绝。
 # 值那一列是"触发动作"，验收、审计日志、以后的事件名都复用它，
@@ -184,6 +191,57 @@ def _as_time(value: object) -> time | None:
         return time.fromisoformat(str(value))
     except ValueError:
         return None
+
+
+def _verified_by_place(
+    verified: list[dict[str, object]] | None,
+) -> dict[str, dict[str, object]]:
+    """核对员的结论按 place_id 建索引，落库时按点位回查（D2）。"""
+    return {
+        str(entry.get("place_id")): entry for entry in (verified or []) if entry.get("place_id")
+    }
+
+
+def _blocking_issue_code(issues: list[dict[str, object]] | None) -> str | None:
+    """挑刺员报的问题里，有没有「一定不能交付」的那一类。"""
+    for issue in issues or []:
+        code = BLOCKING_ISSUE_CODES.get(str(issue.get("rule") or ""))
+        if code is not None:
+            return code
+    return None
+
+
+def _item_confidence(check: dict[str, object] | None, quote: PriceQuote) -> str:
+    """费用项的最终可信度 = 来源核实 × 价格可信度。
+
+    两边都过关才敢标 verified：核对员说这个点位查得到出处、但票价来自一条
+    没核实的说法时，票价这部分仍然是待定。以前只看价格、完全不理核对员的结论，
+    「有出处」这件事对用户和审核都没有任何影响（D2）。
+    """
+    if not (check and check.get("source_ids")):
+        return UNVERIFIED
+    if quote.confidence == VERIFIED:
+        return VERIFIED
+    if quote.confidence == LIKELY:
+        return LIKELY
+    return UNVERIFIED
+
+
+def _item_source_ids(check: dict[str, object] | None, quote: PriceQuote) -> list[str]:
+    """落库的来源编号：核对员认定的来源 + 价格所依据的那一条来源。
+
+    存编号不存 URL（D2）：URL 会改版、会 404，编号不会；转草稿时靠编号把
+    「这个点位凭什么这么说」带到下游。
+    """
+    picked: list[str] = []
+    for raw in (check or {}).get("source_ids") or []:
+        text = str(raw)
+        if text and text not in picked:
+            picked.append(text)
+    for text in quote.source_ids:
+        if text and text not in picked:
+            picked.append(text)
+    return picked
 
 
 def _quote_for(lookup: PlaceFactsSource, place_id: uuid.UUID | None) -> PriceQuote:
@@ -491,6 +549,18 @@ class PlannerService:
                 error_code=PLAN_EMPTY_CODE,
             )
         if result.ok:
+            blocking = _blocking_issue_code(result.context.issues)
+            if blocking is not None:
+                # 排得出日程但一定不能交付（当前只有「超预算」）：收口成 FAILED，
+                # 前端按 error_code 提示用户去改预算或天数。
+                logger.warning("行程 %s 被挑刺员拦下：%s", itinerary.id, blocking)
+                result = RunResult(
+                    ok=False,
+                    context=result.context,
+                    steps=result.steps,
+                    error_code=blocking,
+                )
+        if result.ok:
             self.persist_plan(itinerary, result.context, places=places)
             self.finish_ready(itinerary, run)
         else:
@@ -522,6 +592,7 @@ class PlannerService:
         """
         lookup = places or catalog_place_source(self.db)
         self.repo.clear_plan_content(itinerary.id)
+        verified = _verified_by_place(context.verified)
 
         days: dict[int, ItineraryDay] = {}
         for entry in context.schedule or []:
@@ -538,6 +609,7 @@ class PlannerService:
 
             place_id = _as_uuid(entry.get("place_id"))
             quote = _quote_for(lookup, place_id)
+            check = verified.get(str(place_id)) if place_id is not None else None
             day.items.append(
                 ItineraryItem(
                     order=_as_int(entry.get("order"), default=len(day.items) + 1),
@@ -547,8 +619,8 @@ class PlannerService:
                     transport=entry.get("transport"),
                     price_min=quote.min_cents,
                     price_max=quote.max_cents,
-                    confidence=quote.confidence,
-                    source_ids=list(quote.source_urls),
+                    confidence=_item_confidence(check, quote),
+                    source_ids=_item_source_ids(check, quote),
                     note=quote.reason,
                 )
             )
@@ -557,7 +629,9 @@ class PlannerService:
     def cost_summary(self, itinerary: Itinerary) -> CostSummaryOut:
         """整份行程的费用汇总（契约 CostSummary）。"""
         days = self.repo.days_for_itinerary(itinerary.id)
-        total = summarize(item for day in days for item in day.items)
+        # 单价是每人票价：这里必须按全队人数乘，否则详情显示人均、闸门按总额，
+        # 两处口径对不上（3 人票 100 元时详情写 100、预算却扣 300）。
+        total = summarize((item for day in days for item in day.items), people=itinerary.people)
         return CostSummaryOut(
             min_total=total.min_total,
             max_total=total.max_total,
@@ -599,7 +673,9 @@ class PlannerService:
             days_plan.append(PlanDayOut(day_index=day.day_index, items=items))
 
         base = PlanOut.from_itinerary(itinerary, run_id=run.id if run is not None else None)
-        total = summarize(item for day in days for item in day.items)
+        # 单价是每人票价：这里必须按全队人数乘，否则详情显示人均、闸门按总额，
+        # 两处口径对不上（3 人票 100 元时详情写 100、预算却扣 300）。
+        total = summarize((item for day in days for item in day.items), people=itinerary.people)
         return PlanDetailOut(
             **base.model_dump(),
             steps=[PlanStepOut.model_validate(step) for step in steps],

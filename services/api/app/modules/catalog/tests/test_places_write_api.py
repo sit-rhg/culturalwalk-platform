@@ -148,8 +148,16 @@ def test_create_fact_with_source(
     assert body["claim"].startswith("岳麓书院始建于")
     assert body["confidence"] == "verified"
     assert body["sources"] == [
-        {"title": "岳麓书院官网", "url": "https://example.edu.cn/history", "publisher": "湖南大学"}
+        {
+            "title": "岳麓书院官网",
+            "url": "https://example.edu.cn/history",
+            "publisher": "湖南大学",
+            "accessed_at": body["sources"][0]["accessed_at"],
+            "license": None,
+        }
     ]
+    # 核对日期要留痕（D8）：网页会改版，只说「我查过」等于没查。
+    assert body["sources"][0]["accessed_at"] is not None
     with session_factory() as db:
         fact = db.get(PlaceFact, uuid.UUID(body["id"]))
         assert fact.place_id == uuid.UUID(place["id"])
@@ -167,6 +175,7 @@ def test_create_fact_with_source(
 
 
 def test_create_fact_requires_source_and_valid_url(client: TestClient) -> None:
+    """来源现在可空（D6）：不填来源的「较可信」说法能存，但 verified 必须能指到出处。"""
     place = _create_place(client)
     endpoint = f"{BASE}/{place['id']}/facts"
 
@@ -175,12 +184,27 @@ def test_create_fact_requires_source_and_valid_url(client: TestClient) -> None:
         headers=_headers(),
         json={"claim": "据传始建于北宋", "confidence": "likely"},
     )
-    assert no_source.status_code == 422
-    assert no_source.json()["error"]["details"][0]["field"] == "source"
+    assert no_source.status_code == 201, no_source.text
+    assert no_source.json()["sources"] == []
 
+    verified_without_source = client.post(
+        endpoint,
+        headers=_headers(),
+        json={"claim": "始建于北宋", "confidence": "verified"},
+    )
+    assert verified_without_source.status_code == 422
+    assert verified_without_source.json()["error"]["details"][0]["field"] == "source"
+
+    # 传个空来源对象等于没填：verified 依旧拦下（422），unverified 则按无来源入库。
     empty_source = client.post(endpoint, headers=_headers(), json=_fact_payload(source={}))
     assert empty_source.status_code == 422
-    assert empty_source.json()["error"]["details"][0]["field"] == "source.title"
+    assert empty_source.json()["error"]["details"][0]["field"] == "source"
+
+    empty_source_loose = client.post(
+        endpoint, headers=_headers(), json=_fact_payload(source={}, confidence="unverified")
+    )
+    assert empty_source_loose.status_code == 201, empty_source_loose.text
+    assert empty_source_loose.json()["sources"] == []
 
     ftp = client.post(
         endpoint,
@@ -204,6 +228,60 @@ def test_create_fact_requires_source_and_valid_url(client: TestClient) -> None:
     )
     assert bad_confidence.status_code == 422
     assert bad_confidence.json()["error"]["details"][0]["field"] == "confidence"
+
+
+def test_same_source_is_reused_across_facts(
+    client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    """同一条来源支撑两条说法时只写一行 place_sources（D7）。
+
+    每加一条 fact 就新插一行的话，「这条来源被引用了多少次」永远数不清，
+    改了出版社会留下互相矛盾的副本。
+    """
+    place = _create_place(client)
+    endpoint = f"{BASE}/{place['id']}/facts"
+
+    first = client.post(endpoint, headers=_headers(), json=_fact_payload())
+    second = client.post(
+        endpoint,
+        headers=_headers(),
+        json=_fact_payload(claim="书院现存建筑多为明清重建。"),
+    )
+    assert first.status_code == 201 and second.status_code == 201, second.text
+
+    with session_factory() as db:
+        rows = db.scalars(select(PlaceSource).where(PlaceSource.title == "岳麓书院官网")).all()
+        assert len(rows) == 1, "同一来源被补了第二条 fact，不应再插一行"
+        assert first.json()["sources"][0]["title"] == second.json()["sources"][0]["title"]
+
+
+def test_source_records_accessed_at_and_license(
+    client: TestClient, session_factory: sessionmaker[Session]
+) -> None:
+    """核对日期与授权方式必须落库并能读出来（D8）：网页会改版，能不能转载看 license。"""
+    place = _create_place(client)
+    response = client.post(
+        f"{BASE}/{place['id']}/facts",
+        headers=_headers(),
+        json=_fact_payload(
+            source={
+                "title": "长沙市志",
+                "url": None,
+                "publisher": "地方志办公室",
+                "license": "公共领域",
+            }
+        ),
+    )
+    assert response.status_code == 201, response.text
+    source = response.json()["sources"][0]
+    assert source["license"] == "公共领域"
+    assert source["accessed_at"] is not None
+
+    with session_factory() as db:
+        row = db.scalar(select(PlaceSource).where(PlaceSource.title == "长沙市志"))
+        assert row is not None
+        assert row.accessed_at is not None
+        assert row.license == "公共领域"
 
 
 def test_create_fact_permissions_and_missing_place(
@@ -262,3 +340,18 @@ def test_add_fact_is_idempotent_per_key(
     with session_factory() as db:
         assert len(db.scalars(select(PlaceFact)).all()) == 1
         assert len(db.scalars(select(PlaceSource)).all()) == 1
+
+
+def test_url_only_source_title_fits_column(client: TestClient) -> None:
+    """只给链接时用它当标题，但列宽只有 255：长链接不能把写库撑爆（D7/D8）。"""
+    place = _create_place(client)
+    long_url = "https://example.edu.cn/" + "a" * 400
+
+    response = client.post(
+        f"{BASE}/{place['id']}/facts",
+        headers=_headers(),
+        json=_fact_payload(source={"url": long_url}),
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["sources"][0]["title"] == long_url[:255]

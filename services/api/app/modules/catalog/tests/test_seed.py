@@ -119,6 +119,21 @@ def test_place_id_is_deterministic() -> None:
     assert place_id("yuelu-academy") != place_id("tianxin-pavilion")
 
 
+def test_sources_without_url_are_accepted_and_imported(db_session, places: list[SeedPlace]) -> None:
+    """书志类来源没有网址（契约里 url 可选）：必须能全量导入，不能因为缺 URL 就被拒收（D6）。"""
+    without_url = [
+        fact
+        for place in places
+        for fact in place.facts
+        if fact.source is not None and fact.source.url is None
+    ]
+    assert without_url, "种子数据里应当存在没有网址的书志类来源"
+
+    report = apply_seed(db_session, places)
+    assert report.inserted["sources"] > 0
+    assert db_session.scalars(select(PlaceSource).where(PlaceSource.url.is_(None))).all()
+
+
 def test_apply_seed_is_idempotent(db_session, places: list[SeedPlace]) -> None:
     first = apply_seed(db_session, places)
     counts_after_first = (

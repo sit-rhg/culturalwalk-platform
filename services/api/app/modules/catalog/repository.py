@@ -104,6 +104,19 @@ class CatalogRepository:
         self.db.flush()
         return source
 
+    def find_source(self, *, title: str, url: str | None) -> PlaceSource | None:
+        """同一条来源复用同一行：标题相同、URL 相同（都没有 URL 也算相同）。
+
+        以前每补一条 fact 就新插一条 place_sources，同一本书补三条资料就是三行，
+        「这条来源被多少点位引用」这种问题直接算不出来（D7）。
+        """
+        condition = PlaceSource.title == title
+        if url is None:
+            condition = and_(condition, PlaceSource.url.is_(None))
+        else:
+            condition = and_(condition, PlaceSource.url == url)
+        return self.db.scalars(select(PlaceSource).where(condition).limit(1)).first()
+
     def add_fact(self, fact: PlaceFact) -> PlaceFact:
         self.db.add(fact)
         self.db.flush()

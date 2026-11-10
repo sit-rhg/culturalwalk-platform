@@ -1960,6 +1960,13 @@ export interface components {
             title?: string;
             url?: string | null;
             publisher?: string | null;
+            /**
+             * Format: date-time
+             * @description 这次核对是哪一天（网页会改版，时间要留在数据里）
+             */
+            accessed_at?: string | null;
+            /** @description 授权方式（如 CC BY-SA 4.0）；能不能转载看这一项 */
+            license?: string | null;
         };
         RouteNodeInput: {
             /** Format: uuid */

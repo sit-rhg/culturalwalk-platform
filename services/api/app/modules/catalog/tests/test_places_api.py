@@ -338,10 +338,20 @@ def test_detail_includes_facts_and_sources(
             "title": "岳麓书院：百年实事求是，千载弦歌不绝",
             "url": "http://ccpd.china.com.cn/2023-10/08/content_42543919.html",
             "publisher": "中国网",
+            "accessed_at": None,
+            "license": None,
         }
     ]
     # 书志类来源没有 URL，序列化成 null 而不是空串
-    assert likely["sources"] == [{"title": "长沙市志", "url": None, "publisher": "地方志"}]
+    assert likely["sources"] == [
+        {
+            "title": "长沙市志",
+            "url": None,
+            "publisher": "地方志",
+            "accessed_at": None,
+            "license": None,
+        }
+    ]
 
 
 def test_detail_hides_facts_without_source(
