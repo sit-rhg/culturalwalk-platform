@@ -86,7 +86,7 @@ def make_context(*, days: int = 2, pace: str = "normal", budget_total: int = 800
         days=days,
         people=2,
         budget_total=budget_total,
-        preferences={"pace": pace, "transport": "walk"},
+        preferences={"pace": pace, "transport": ["walk"]},
     )
 
 
@@ -194,7 +194,7 @@ def test_critic_flags_over_budget_duplicate_and_far_leg() -> None:
         days=1,
         people=1,
         budget_total=1000,  # 1000 分 = 10 元，必然超
-        preferences={"transport": "walk"},
+        preferences={"transport": ["walk"]},
         candidates=[
             Candidate(place_id="p1", name="A", lat=28.1900, lon=112.9700, price_max=5000),
             Candidate(place_id="p2", name="B", lat=28.3000, lon=112.9700, price_max=5000),

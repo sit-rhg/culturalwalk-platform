@@ -107,8 +107,8 @@ test('访客到评论：一条路线从提交到发布的全流程', async ({ pa
   })
 
   await test.step('退出后换 reviewer@demo.local 登录，进入 /admin', async () => {
-    await page.goto('/login')
-    await expect(page.getByText('你已登录为')).toBeVisible()
+    // 已登录时访问 /login 会被守卫送回发现页（WP-01 A），所以从「我的」页退出。
+    await navLink(page, '我的').click()
     await page.getByRole('button', { name: '退出登录', exact: true }).click()
     await loginWithDemoAccount(page, REVIEWER)
 

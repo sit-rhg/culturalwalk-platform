@@ -305,12 +305,12 @@ def test_route_detail_days_and_etag(client: TestClient, db_session: Session) -> 
     assert item["place"]["name"] == "岳麓书院"
     assert (item["price_min"], item["price_max"]) == (1000, 2000)
     etag = response.headers["ETag"]
-    assert response.headers["Cache-Control"] == "public, max-age=60"
+    assert response.headers["Cache-Control"] == "public, no-cache"
     cached = client.get(f"{ROUTES_API}/{route_id}", headers={"If-None-Match": etag})
     assert cached.status_code == 304
     assert cached.content == b""
     assert cached.headers["ETag"] == etag
-    assert cached.headers["Cache-Control"] == "public, max-age=60"
+    assert cached.headers["Cache-Control"] == "public, no-cache"
 
 
 def test_route_list_sets_etag_and_serves_304(client: TestClient, db_session: Session) -> None:
@@ -321,7 +321,7 @@ def test_route_list_sets_etag_and_serves_304(client: TestClient, db_session: Ses
     assert first.status_code == 200
     etag = first.headers["ETag"]
     assert etag.startswith('"')
-    assert first.headers["Cache-Control"] == "public, max-age=60"
+    assert first.headers["Cache-Control"] == "public, no-cache"
 
     cached = client.get(ROUTES_API, headers={"If-None-Match": etag})
     assert cached.status_code == 304
