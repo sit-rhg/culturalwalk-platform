@@ -1,6 +1,6 @@
 """moderation: 幂等键 → 首次响应快照（重放返回首响应而非当前实体）
 
-Revision ID: 0017_moderation_idempotency
+Revision ID: 0018_moderation_idempotency
 Revises: 0016_idempotency
 Create Date: 2026-11-08
 
@@ -21,8 +21,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
-revision: str = "0017_moderation_idempotency"
-down_revision: str | Sequence[str] | None = "0016_idempotency"
+revision: str = "0018_moderation_idempotency"
+down_revision: str | Sequence[str] | None = "0017_route_idempotency"
 branch_labels: Sequence[str] | None = None
 depends_on: Sequence[str] | None = None
 

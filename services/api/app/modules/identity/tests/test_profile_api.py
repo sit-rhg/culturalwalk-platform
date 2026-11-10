@@ -34,6 +34,7 @@ def _published_route(
     route_id: uuid.UUID | None = None,
     created_at: datetime | None = None,
     publication_state: PublicationState | None = PublicationState.PUBLISHED,
+    channel: str = "user",
 ) -> RouteVersion:
     """造一条冻结过的路线；给了 route_id 就同时写一条发布记录。
 
@@ -46,6 +47,7 @@ def _published_route(
         summary=summary,
         theme_tags=["老街"],
         duration_minutes=180,
+        channel=channel,
         state=DraftState.ARCHIVED,
     )
     db.add(draft)
@@ -180,4 +182,22 @@ def test_已停用的用户也按不存在处理(client: TestClient, db_session:
 
     resp = client.get(f"{API}/{USER_ID}/profile")
     assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "NOT_FOUND"
+
+
+def test_官方路线在主页显示官方来源(client: TestClient, db_session: Session) -> None:
+    """编辑产出的精选是 channel=official；主页不能把它说成用户投稿。"""
+    official_id = uuid.uuid4()
+    _published_route(db_session, owner_id=ADMIN_ID, route_id=official_id, channel="official")
+    db_session.commit()
+
+    body = client.get(f"{API}/{ADMIN_ID}/profile").json()
+
+    assert [item["channel"] for item in body["published_routes"]] == ["official"]
+
+
+def test_非法用户id返回404而不是422(client: TestClient) -> None:
+    """契约只声明 200 / 404；路径参数不是 UUID 时也不该落到 422。"""
+    resp = client.get(f"{API}/not-a-uuid/profile")
+    assert resp.status_code == 404, resp.text
     assert resp.json()["error"]["code"] == "NOT_FOUND"

@@ -91,9 +91,7 @@ class PlaceholderS3Signer:
         policy = base64.b64encode(
             json.dumps(policy_document, separators=(",", ":"), sort_keys=True).encode()
         ).decode()
-        signing_key = hmac.new(
-            self.secret_key.encode(), f"{day}/{self.region}/s3".encode(), hashlib.sha256
-        ).digest()
+        signing_key = signing_key_for(self.secret_key, day=day, region=self.region)
         signature = hmac.new(signing_key, policy.encode(), hashlib.sha256).hexdigest()
 
         fields = {
@@ -112,8 +110,21 @@ class PlaceholderS3Signer:
         )
 
 
+def signing_key_for(secret_key: str, *, day: str, region: str) -> bytes:
+    """AWS4 签名链：kDate → kRegion → kService → kSigning。
+
+    少任何一级（例如直接 HMAC(secret, "day/region/s3")）算出来的签名只有本仓库认，
+    真 S3/MinIO 会回 403 —— 前端拿到的上传地址就永远传不上去，而且错误发生在
+    对象存储侧，本机联调完全看不出来。
+    """
+    k_date = hmac.new(("AWS4" + secret_key).encode(), day.encode(), hashlib.sha256).digest()
+    k_region = hmac.new(k_date, region.encode(), hashlib.sha256).digest()
+    k_service = hmac.new(k_region, b"s3", hashlib.sha256).digest()
+    return hmac.new(k_service, b"aws4_request", hashlib.sha256).digest()
+
+
 def get_storage_signer() -> StorageSigner:
-    """唯一选择实现的地方：换成 MinIO/OSS 客户端时只改这一处。"""
+    """唯一选择实现的地方；签名与读写必须选同一个后端，否则前端传到 A、worker 读 B。"""
     return PlaceholderS3Signer(
         endpoint=settings.s3_endpoint,
         bucket=settings.s3_bucket,

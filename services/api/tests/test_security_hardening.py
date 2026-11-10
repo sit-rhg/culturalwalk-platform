@@ -14,13 +14,14 @@ import pytest
 from fastapi.testclient import TestClient
 from jose import jwt
 from pydantic import ValidationError
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.config import Settings, settings
 from app.core.db import Base
 from app.main import create_app
+from app.modules.identity.models import User
 
 ME = "/api/v1/users/me"
 REGISTER = "/api/v1/auth/register"
@@ -63,7 +64,10 @@ def test_logout_revokes_access_token_immediately(client: TestClient) -> None:
     """登出后同一个 access 令牌立刻 401，不用等它自然过期；重复登出仍是 204。"""
     issued = client.post(REGISTER, json={"username": "logout_case", "password": PASSWORD})
     assert issued.status_code == 201, issued.text
-    headers = {"Authorization": f"Bearer {issued.json()['access_token']}"}
+    headers = {
+        "Authorization": f"Bearer {issued.json()['access_token']}",
+        "Idempotency-Key": "logout-key-0001",
+    }
 
     assert client.get(ME, headers=headers).status_code == 200
     assert client.post(LOGOUT, headers=headers).status_code == 204
@@ -80,7 +84,17 @@ def test_non_local_env_refuses_the_repository_default_secret() -> None:
     with pytest.raises(ValidationError):
         Settings(env="prod", jwt_secret="still-too-short")
 
-    assert Settings(env="prod", jwt_secret="x" * 32).env == "prod"
+    secure = dict(
+        env="prod",
+        jwt_secret="x" * 32,
+        storage_backend="s3",
+        s3_access_key="AKIAEXAMPLE123456",
+        s3_secret_key="y" * 32,
+    )
+    assert Settings(**secure).env == "prod"
+
+    with pytest.raises(ValidationError):
+        Settings(env="prod", jwt_secret="x" * 32)
 
 
 def test_commit_failure_is_reported_before_the_response(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -109,3 +123,42 @@ def test_commit_failure_is_reported_before_the_response(monkeypatch: pytest.Monk
         engine.dispose()
 
     assert response.status_code >= 500
+
+
+def test_public_endpoint_tolerates_an_expired_token(client: TestClient) -> None:
+    """访客浏览器里可能躺着过期令牌：公开列表不该因此 401。"""
+    token = _raw_token(**_base_claims(), exp=int(time.time()) - 60)
+
+    response = client.get("/api/v1/routes", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["items"] == []
+
+
+def test_openapi_declares_bearer_auth_instead_of_header_parameters(client: TestClient) -> None:
+    """Swagger UI 要能直接鉴权：用 securitySchemes + security，而不是 authorization 参数。"""
+    document = client.get("/openapi.json").json()
+
+    scheme = document["components"]["securitySchemes"]["bearerAuth"]
+    assert scheme == {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}
+
+    has_security = False
+    for operations in document["paths"].values():
+        for operation in operations.values():
+            if not isinstance(operation, dict):
+                continue
+            for parameter in operation.get("parameters", []):
+                assert parameter.get("name") != "authorization"
+            if operation.get("security") == [{"bearerAuth": []}]:
+                has_security = True
+    assert has_security
+
+
+def test_writes_are_committed_before_the_response(client: TestClient, db_session: Session) -> None:
+    """中间件在响应前提交：换个新 Session 也必须看得到刚注册的用户。"""
+    response = client.post(REGISTER, json={"username": "fresh_session", "password": PASSWORD})
+    assert response.status_code == 201, response.text
+
+    with Session(db_session.bind) as fresh:
+        found = fresh.scalar(select(User.id).where(User.username == "fresh_session"))
+    assert found is not None

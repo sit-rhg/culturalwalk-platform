@@ -504,9 +504,10 @@ class CommunityService:
             try:
                 place = catalog.get_place(uuid.UUID(str(place_id)))
             except (NotFound, ValueError):
-                # 公开详情只展示已核验（verified）地点：草稿地点、已下架地点不出现，
-                # 也不因为「节点里有个无效 place_id」整条路线 500。
-                continue
+                # 公开详情只展示已核验（verified）地点：草稿地点、已下架地点不出现。
+                # 但条目要保留并标 place_missing，否则行程里突然少一站、position
+                # 出现空洞；也不因为「节点里有个无效 place_id」整条路线 500。
+                place = None
             items.append(
                 RouteDayItemOut(
                     position=_optional_int(node.get("position")) or index,
@@ -514,6 +515,7 @@ class CommunityService:
                     stay_minutes=_optional_int(node.get("stay_minutes")) or 0,
                     transport=_optional_str(node.get("transport")),
                     place=place,
+                    place_missing=place is None,
                     price_min=_optional_int(node.get("price_min")),
                     price_max=_optional_int(node.get("price_max")),
                     confidence=None,
