@@ -628,6 +628,31 @@ def test_comment_same_key_different_body_is_409(
     assert conflict.json()["error"]["code"] == "IDEMPOTENCY_KEY_REUSED"
 
 
+def test_scan_batch_cap_returns_continuation_cursor(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """筛选极严、候选又多时，批次上限不能把剩余结果静默丢掉。"""
+    for index in range(21):
+        _published_route(db_session, title=f"历史路线 {index}", theme_tags=["历史"])
+    monkeypatch.setattr("app.modules.community.service._MAX_SCAN_BATCHES", 1)
+
+    first = client.get(ROUTES_API, params={"theme": "美食", "limit": 1})
+    assert first.status_code == 200, first.text
+    body = first.json()
+    assert body["items"] == []
+    # 第一批 20 条全被筛掉，但还剩候选：必须给继续游标，而不是 None。
+    assert body["next_cursor"] is not None
+
+    second = client.get(
+        ROUTES_API, params={"theme": "美食", "limit": 1, "cursor": body["next_cursor"]}
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["items"] == []
+    assert second.json()["next_cursor"] is None
+
+
 def test_detail_keeps_missing_place_as_placeholder(client: TestClient, db_session: Session) -> None:
     """发布后地点被删除：条目仍留在行程里，place 为空并标 place_missing。"""
     place_id = _place(db_session)
@@ -643,4 +668,3 @@ def test_detail_keeps_missing_place_as_placeholder(client: TestClient, db_sessio
     assert items[0]["position"] == 1
     assert items[0]["place"] is None
     assert items[0]["place_missing"] is True
-

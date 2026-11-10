@@ -291,8 +291,9 @@ class CommunityService:
         if len(matched) > limit:
             last = page[-1]
             next_cursor: str | None = _encode_route_cursor((last[3], last[2], last[0]), sort)
-        elif not exhausted and scan_after is not None and page:
-            # 还有候选没扫完（批次上限），游标指向本次扫到的位置，下一页继续。
+        elif not exhausted and scan_after is not None and scan_after != after:
+            # 批次上限用尽但仍有候选：游标指向已扫到的位置，下一页继续。
+            # 不能因为本页被筛空就返回 None——那会把后面的结果悄悄丢掉。
             next_cursor = _encode_route_cursor(scan_after, sort)
         else:
             next_cursor = None

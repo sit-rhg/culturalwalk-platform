@@ -75,6 +75,16 @@ from app.modules.routes.service import RoutesService
 # 见 core/deps.CurrentUser.is_admin）。这里不放宽成 user。
 _REVIEW_ROLES = ("editor", "admin")
 
+# docs/02 §3.2：终态不能再流转。重投只顶掉仍在流程里的投稿。
+_TERMINAL_SUBMISSION_STATES = frozenset(
+    {
+        SubmissionState.APPROVED,
+        SubmissionState.REJECTED,
+        SubmissionState.WITHDRAWN,
+        SubmissionState.SUPERSEDED,
+    }
+)
+
 # 幂等重放要还原的响应模型与首次响应的状态码；scope 同时用作快照的命名空间。
 _RESPONSE_MODELS: dict[str, type[BaseModel]] = {
     "submit": SubmissionOut,
@@ -219,15 +229,20 @@ class ModerationService:
         return submission
 
     def _supersede_previous(self, *, draft_id: uuid.UUID) -> None:
-        """同一草稿的历史投稿转 SUPERSEDED；已批准的投稿不允许被再投覆盖。"""
+        """同一草稿的历史投稿转 SUPERSEDED，但已批准的不能重复投稿。
+
+        终态（APPROVED/REJECTED/WITHDRAWN/SUPERSEDED）不再流转：重投只能顶掉
+        仍在流程里的投稿，不能把已经结束的初审/撤回记录改写成 SUPERSEDED。
+        """
         for previous in self.repo.list_submissions_by_draft(draft_id):
             if previous.state is SubmissionState.APPROVED:
                 raise Conflict(
                     "该草稿已有通过审核的投稿，不能重复提交",
                     code="SUBMISSION_ALREADY_APPROVED",
                 )
-            if previous.state is not SubmissionState.SUPERSEDED:
-                previous.state = SubmissionState.SUPERSEDED
+            if previous.state in _TERMINAL_SUBMISSION_STATES:
+                continue
+            previous.state = SubmissionState.SUPERSEDED
 
     # ===== 撤回投稿 =====
     def withdraw(

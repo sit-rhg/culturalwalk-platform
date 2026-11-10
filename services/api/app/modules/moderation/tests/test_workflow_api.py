@@ -833,3 +833,48 @@ def test_claim_replay_returns_first_response_after_lease_reclaimed(
     assert replay.json()["id"] == task["id"]
     assert replay.json()["state"] == "CLAIMED"
     assert replay.json()["lease_expires_at"] == first_lease
+
+
+def test_resubmit_keeps_withdrawn_submission_terminal(
+    client: TestClient,
+    user_headers: dict[str, str],
+) -> None:
+    """撤回过再重投：旧投稿保持 WITHDRAWN，不被改写成 SUPERSEDED。"""
+    draft_id = _create_draft(client, user_headers, title="撤回后重投")
+    first = _submit(client, user_headers, draft_id)
+    withdrawn = _post(client, f"{API}/route-drafts/{draft_id}/withdraw", user_headers, json={})
+    assert withdrawn.status_code == 200, withdrawn.text
+
+    second = _submit(client, user_headers, draft_id)
+
+    first_detail = client.get(f"{API}/submissions/{first['id']}", headers=user_headers)
+    assert first_detail.json()["state"] == "WITHDRAWN"
+    second_detail = client.get(f"{API}/submissions/{second['id']}", headers=user_headers)
+    assert second_detail.json()["state"] == "PENDING_REVIEW"
+
+
+def test_resubmit_keeps_rejected_submission_terminal(
+    client: TestClient,
+    user_headers: dict[str, str],
+    editor_headers: dict[str, str],
+) -> None:
+    """被驳回后重投：旧投稿保持 REJECTED，不被改写成 SUPERSEDED。"""
+    draft_id = _create_draft(client, user_headers, title="驳回后重投")
+    first = _submit(client, user_headers, draft_id)
+    task = _task_for(client, editor_headers, first["id"])
+    _claim(client, editor_headers, task["id"])
+
+    rejected = _post(
+        client,
+        f"{API}/review/tasks/{task['id']}/decision",
+        editor_headers,
+        json={"action": "reject", "reason": "内容与城市漫步主题无关"},
+    )
+    assert rejected.status_code == 200, rejected.text
+
+    second = _submit(client, user_headers, draft_id)
+
+    first_detail = client.get(f"{API}/submissions/{first['id']}", headers=user_headers)
+    assert first_detail.json()["state"] == "REJECTED"
+    second_detail = client.get(f"{API}/submissions/{second['id']}", headers=user_headers)
+    assert second_detail.json()["state"] == "PENDING_REVIEW"
