@@ -682,7 +682,7 @@ paths:
             ETag:
               schema: { type: string }
             Cache-Control:
-              schema: { type: string, example: "public, max-age=60" }
+              schema: { type: string, example: "public, no-cache" }
           content:
             application/json:
               schema:
@@ -712,7 +712,7 @@ paths:
             ETag:
               schema: { type: string }
             Cache-Control:
-              schema: { type: string, example: "public, max-age=60" }
+              schema: { type: string, example: "public, no-cache" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RouteDetail" }

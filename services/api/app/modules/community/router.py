@@ -60,7 +60,9 @@ def _user_id_of(user: CurrentUser | None) -> uuid.UUID | None:
 
 
 # 公开读接口的缓存策略：内容随发布/收藏变化，60 秒足够兜住热点读。
-_CACHE_CONTROL = "public, max-age=60"
+# 必须每次回源校验：列表里随时会多出一条刚发布的路线，浏览器若按 max-age
+# 直接吃缓存，用户点完「发布上线」再回发现页会看不到自己的路线（ETag 让回源很便宜）。
+_CACHE_CONTROL = "public, no-cache"
 
 
 def _payload_etag(payload: BaseModel) -> str:
