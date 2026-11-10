@@ -288,6 +288,27 @@ def test_me_rejects_disabled_user(client: TestClient, db_session: Session) -> No
     assert resp.json()["error"]["code"] == "UNAUTHORIZED"
 
 
+def test_disabled_user_token_rejected_on_other_endpoints(
+    client: TestClient, db_session: Session
+) -> None:
+    """停用不能只挡住 /users/me：通知列表这类普通端点也必须当场 401。
+
+    只查会话吊销兜不住停用——停用账号不会删会话，旧令牌能再用满 900 秒。
+    """
+    tokens = _register(client, username="ming")
+    url = "/api/v1/notifications"
+    assert client.get(url, headers=_bearer(tokens["access_token"])).status_code == 200
+
+    row = db_session.scalar(select(User).where(User.username == "ming"))
+    assert row is not None
+    row.status = STATUS_DISABLED
+    db_session.flush()
+
+    resp = client.get(url, headers=_bearer(tokens["access_token"]))
+    assert resp.status_code == 401, resp.text
+    assert resp.json()["error"]["code"] == "UNAUTHORIZED"
+
+
 def test_register_race_over_http_is_conflict(
     client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
