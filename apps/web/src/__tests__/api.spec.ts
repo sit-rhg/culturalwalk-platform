@@ -16,6 +16,7 @@ let api: ApiModule['api']
 let ApiError: ApiModule['ApiError']
 let setToken: ApiModule['setToken']
 let clearSessionTokens: ApiModule['clearSessionTokens']
+let REQUEST_TIMEOUT_MS: ApiModule['REQUEST_TIMEOUT_MS']
 let readItem: StorageModule['readItem']
 let writeItem: StorageModule['writeItem']
 
@@ -37,6 +38,7 @@ beforeAll(async () => {
   ApiError = mod.ApiError
   setToken = mod.setToken
   clearSessionTokens = mod.clearSessionTokens
+  REQUEST_TIMEOUT_MS = mod.REQUEST_TIMEOUT_MS
   const storage = await import('@/shared/storage')
   readItem = storage.readItem
   writeItem = storage.writeItem
@@ -167,6 +169,59 @@ describe('共享请求层', () => {
     // 不清理的话页面会一直带着废 token 反复 401
     expect(readItem('cw_token')).toBeNull()
     expect(readItem('cw_refresh_token')).toBeNull()
+  })
+
+  it('默认 15s 没响应就中止，抛 code=TIMEOUT 的中文错误', async () => {
+    vi.useFakeTimers()
+    try {
+      installFetch()
+      // 永不 resolve 的请求，只有 abort 能让它结束——正好模拟后端卡死
+      fetchMock.mockImplementation(
+        (_url: string, init: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () =>
+              reject(new DOMException('Aborted', 'AbortError')),
+            )
+          }),
+      )
+
+      const pending = api.get('/routes/slow').catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS + 1)
+      const error = await pending
+
+      expect(error).toBeInstanceOf(ApiError)
+      expect(error).toMatchObject({
+        status: 408,
+        code: 'TIMEOUT',
+        message: '请求超时（15 秒），请稍后重试',
+      })
+      // 超时必须真的把底层请求 abort 掉，否则连接一直挂着
+      expect((fetchMock.mock.calls[0][1] as RequestInit).signal?.aborted).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('调用方 abort 时抛 ABORTED，不会被误判成超时', async () => {
+    installFetch()
+    fetchMock.mockImplementation(
+      (_url: string, init: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () =>
+            reject(new DOMException('Aborted', 'AbortError')),
+          )
+        }),
+    )
+    const controller = new AbortController()
+
+    const pending = api
+      .get('/routes/slow', { signal: controller.signal })
+      .catch((error: unknown) => error)
+    controller.abort()
+    const error = await pending
+
+    expect(error).toBeInstanceOf(ApiError)
+    expect(error).toMatchObject({ status: 0, code: 'ABORTED', message: '请求已取消' })
   })
 
   it('api.mock 在真接口模式下也走演示数据，并给出演示身份', async () => {

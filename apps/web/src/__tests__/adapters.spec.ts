@@ -73,8 +73,11 @@ describe('裁决请求体', () => {
     })
   })
 
-  it('通过时即使写了备注也不带 reason（后端 approve 不收）', () => {
-    expect(decisionPayload('approve', '内容无误，可以发布')).toEqual({ action: 'approve' })
+  it('通过时填了备注也带 reason，不再静默丢掉', () => {
+    expect(decisionPayload('approve', '内容无误，可以发布')).toEqual({
+      action: 'approve',
+      reason: '内容无误，可以发布',
+    })
   })
 
   it('理由为空时省略 reason', () => {

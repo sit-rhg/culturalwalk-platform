@@ -92,6 +92,7 @@ export function redirectTarget(raw: unknown): string {
   const value = Array.isArray(raw) ? raw[0] : raw
   if (typeof value !== 'string') return '/'
   const path = value.trim()
-  if (path === '' || !path.startsWith('/') || path.startsWith('//')) return '/'
+  // 浏览器会把 \ 归一成 /，所以 /\evil.com 和 //evil.com 一样是站外地址，不能放行
+  if (path === '' || !path.startsWith('/') || path.startsWith('//') || path.startsWith('/\\')) return '/'
   return path
 }

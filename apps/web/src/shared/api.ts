@@ -73,6 +73,8 @@ function expireSession(): void {
 interface RequestOptions extends RequestInit {
   /** 写操作默认带 Idempotency-Key；只读或后端没要求的请求可以关掉 */
   idempotent?: boolean
+  /** 调用方自己握着幂等键：同一份提交意图重试时必须复用，否则后端会记成两单 */
+  idempotencyKey?: string
   /** 强制走 shared/mock（接口未接入的页面用），即使已切到真接口 */
   forceMock?: boolean
 }
@@ -83,7 +85,9 @@ function buildHeaders(init: RequestOptions, token: string | null): Headers {
   if (init.body) headers.set('Content-Type', 'application/json')
   if (token) headers.set('Authorization', `Bearer ${token}`)
   const isWrite = (init.method ?? 'GET').toUpperCase() !== 'GET'
-  if (init.idempotent ?? isWrite) {
+  if (init.idempotencyKey) {
+    headers.set('Idempotency-Key', init.idempotencyKey)
+  } else if (init.idempotent ?? isWrite) {
     headers.set('Idempotency-Key', uuid())
   }
   return headers
@@ -121,14 +125,55 @@ async function parseBody<T>(res: Response): Promise<T> {
   return data as T
 }
 
+/**
+ * 默认 15s 超时：接口慢到这一步页面早就该给重试入口了，
+ * 继续挂着只会留下一个永远转圈的 loading。
+ */
+export const REQUEST_TIMEOUT_MS = 15_000
+
+/**
+ * 一次请求 = 一个 AbortController：
+ * - 计时器到点 → 主动 abort，并标记 timedOut，外面看到的一定是 TIMEOUT；
+ * - 调用方传了 init.signal → 把它的 abort 转发进来，且不会被误判成超时；
+ * - 无论哪条路结束都清掉计时器与监听，组件卸载后不留悬挂请求。
+ */
 async function send<T>(path: string, init: RequestOptions, token: string | null): Promise<T> {
-  const res = await fetch(BASE + path, {
-    method: init.method,
-    body: init.body,
-    headers: buildHeaders(init, token),
-    signal: init.signal,
-  })
-  return parseBody<T>(res)
+  const controller = new AbortController()
+  const external = init.signal
+  let timedOut = false
+
+  const timer = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, REQUEST_TIMEOUT_MS)
+
+  const forwardAbort = (): void => controller.abort()
+  if (external) {
+    if (external.aborted) controller.abort()
+    else external.addEventListener('abort', forwardAbort, { once: true })
+  }
+
+  try {
+    const res = await fetch(BASE + path, {
+      method: init.method,
+      body: init.body,
+      headers: buildHeaders(init, token),
+      signal: controller.signal,
+    })
+    return await parseBody<T>(res)
+  } catch (error) {
+    if (timedOut) {
+      throw new ApiError(408, 'TIMEOUT', '请求超时（15 秒），请稍后重试')
+    }
+    // 外部取消是正常流程（切页/卸载），不能包装成网络错误让页面弹红条
+    if (external?.aborted) {
+      throw new ApiError(0, 'ABORTED', '请求已取消')
+    }
+    throw error
+  } finally {
+    clearTimeout(timer)
+    external?.removeEventListener('abort', forwardAbort)
+  }
 }
 
 interface RefreshResponse {
@@ -223,9 +268,14 @@ export async function request<T>(path: string, init: RequestOptions = {}): Promi
 }
 
 export const api = {
-  get: <T>(path: string) => request<T>(path),
-  post: <T>(path: string, body?: unknown) =>
-    request<T>(path, { method: 'POST', body: body ? JSON.stringify(body) : undefined }),
+  get: <T>(path: string, init?: RequestInit) => request<T>(path, init),
+  /** options.idempotencyKey：同一次提交意图重试时复用同一个键，后端才会去重 */
+  post: <T>(path: string, body?: unknown, options?: { idempotencyKey?: string }) =>
+    request<T>(path, {
+      method: 'POST',
+      body: body ? JSON.stringify(body) : undefined,
+      idempotencyKey: options?.idempotencyKey,
+    }),
   patch: <T>(path: string, body: unknown, lockVersion: number) =>
     request<T>(path, {
       method: 'PATCH',

@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Annotated
 
-from fastapi import Depends, Header
+from fastapi import Depends, Header, Request
 from jose import JWTError, jwt
 
 from app.core.config import settings
@@ -105,12 +105,18 @@ def _user_from_auth_header(
     )
 
 
-def optional_user(
-    db: DbDep,
-    authorization: Annotated[str | None, Header()] = None,
-) -> CurrentUser | None:
-    """公开接口用它：有 token 就带上用户（用于 is_favorited 之类）。"""
-    return _user_from_auth_header(authorization, db)
+def optional_user(db: DbDep, request: Request) -> CurrentUser | None:
+    """公开接口用它：有 token 就带上用户（用于 is_favorited 之类）。
+
+    刻意不声明 `authorization` 参数：声明了 FastAPI 会把「Authorization 头」写进
+    公开端点的 OpenAPI，前端照契约生成的代码会以为这些接口必须登录。这里直接从
+    request 读，并且在令牌过期/被篡改时按匿名处理——访客带着一枚过期令牌也应该能看
+    公开列表，而不是被 401 挡在门外。
+    """
+    try:
+        return _user_from_auth_header(request.headers.get("authorization"), db)
+    except Unauthorized:
+        return None
 
 
 def require_user(
@@ -168,11 +174,14 @@ def require_role(*allowed_roles: str) -> Callable[..., CurrentUser]:
     return dependency
 
 
-# 历史别名：admin 与 editor 都能进管理端（沿用 is_admin 的既有口径，行为不变）
-require_admin = require_role("admin", "editor")
+# 账号级操作（审计日志、发布/下线、账号管理）只给管理员；编辑可以做内容审核与
+# 点位维护，但看不到审计、也不能管账号。两者的差别集中写在这两行，端点上不写 if。
+require_admin = require_role("admin")
+require_editor = require_role("admin", "editor")
 
 
 CurrentUserDep = Annotated[CurrentUser, Depends(require_user)]
 LogoutUserDep = Annotated[CurrentUser, Depends(require_user_stale_ok)]
 OptionalUserDep = Annotated[CurrentUser | None, Depends(optional_user)]
 AdminDep = Annotated[CurrentUser, Depends(require_admin)]
+EditorDep = Annotated[CurrentUser, Depends(require_editor)]

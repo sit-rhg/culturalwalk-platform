@@ -629,7 +629,9 @@ class PlannerService:
     def cost_summary(self, itinerary: Itinerary) -> CostSummaryOut:
         """整份行程的费用汇总（契约 CostSummary）。"""
         days = self.repo.days_for_itinerary(itinerary.id)
-        total = summarize(item for day in days for item in day.items)
+        # 单价是每人票价：这里必须按全队人数乘，否则详情显示人均、闸门按总额，
+        # 两处口径对不上（3 人票 100 元时详情写 100、预算却扣 300）。
+        total = summarize((item for day in days for item in day.items), people=itinerary.people)
         return CostSummaryOut(
             min_total=total.min_total,
             max_total=total.max_total,
@@ -671,7 +673,9 @@ class PlannerService:
             days_plan.append(PlanDayOut(day_index=day.day_index, items=items))
 
         base = PlanOut.from_itinerary(itinerary, run_id=run.id if run is not None else None)
-        total = summarize(item for day in days for item in day.items)
+        # 单价是每人票价：这里必须按全队人数乘，否则详情显示人均、闸门按总额，
+        # 两处口径对不上（3 人票 100 元时详情写 100、预算却扣 300）。
+        total = summarize((item for day in days for item in day.items), people=itinerary.people)
         return PlanDetailOut(
             **base.model_dump(),
             steps=[PlanStepOut.model_validate(step) for step in steps],

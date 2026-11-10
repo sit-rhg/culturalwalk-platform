@@ -20,7 +20,10 @@ export function readItem(key: string): string | null {
   const ls = backing()
   if (ls) {
     try {
-      return ls.getItem(key)
+      const value = ls.getItem(key)
+      // getItem 返回 null 不等于没写过：setItem 抛错（配额满/隐私模式）时
+      // 值只落在内存里，这时必须回查内存，否则刚写进去的 token 读不回来。
+      if (value !== null) return value
     } catch {
       // 隐私模式下 setItem/getItem 可能抛异常，退回内存
     }

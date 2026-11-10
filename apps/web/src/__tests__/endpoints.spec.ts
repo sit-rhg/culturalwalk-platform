@@ -213,17 +213,25 @@ describe('审核后台：队列 / 认领 / 裁决', () => {
     expect(task.state).toBe('CLAIMED')
   })
 
-  it('裁决把页面上的 note 翻译成后端的 reason，通过时省略 reason', async () => {
+  it('裁决把页面上的 note 翻译成后端的 reason，通过时填了备注也带 reason', async () => {
     fetchMock.mockImplementation(() => jsonResponse(200, { id: 't-1', state: 'COMPLETED' }))
 
     await endpoints.decideReviewTask('t-1', 'request_changes', '文化说明缺来源，补两条官方资料')
+    // 只断言 body 的话，路由写错也照样绿，所以完整 URL 一起锁住（A9）
+    expect(urlOf()).toBe('/api/v1/review/tasks/t-1/decision')
+    expect(initOf().method).toBe('POST')
     expect(bodyOf()).toEqual({
       action: 'request_changes',
       reason: '文化说明缺来源，补两条官方资料',
     })
 
+    await endpoints.decideReviewTask('t-1', 'approve', '内容无误，可以正式发布')
+    expect(urlOf(1)).toBe('/api/v1/review/tasks/t-1/decision')
+    expect(bodyOf(1)).toEqual({ action: 'approve', reason: '内容无误，可以正式发布' })
+
+    // 没填备注就只发 action；approve 的 10 字下限由页面的 decisionBlockedReason 先拦
     await endpoints.decideReviewTask('t-1', 'approve', '')
-    expect(bodyOf(1)).toEqual({ action: 'approve' })
+    expect(bodyOf(2)).toEqual({ action: 'approve' })
   })
 
   it('提交详情取 snapshot / previous_snapshot / author', async () => {

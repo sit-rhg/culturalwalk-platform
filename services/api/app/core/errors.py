@@ -67,6 +67,9 @@ class ServiceUnavailable(AppError):
     """
 
     http_status = 503
+    # AppError 的默认 code 是 BAD_REQUEST；503 必须带自己的码，否则前端会把
+    # 「稍后重试」当成参数错误处理。
+    code = "SERVICE_UNAVAILABLE"
 
 
 class ValidationFailed(AppError):

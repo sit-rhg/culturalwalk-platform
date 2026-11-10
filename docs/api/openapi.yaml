@@ -286,6 +286,12 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RouteDraft" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/Validation"
 
   /route-drafts/{draft_id}:
     parameters:
@@ -299,6 +305,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RouteDraftDetail" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
@@ -320,15 +328,29 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RouteDraft" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
         "412":
           $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/Validation"
     delete:
       tags: [drafts]
       summary: 删除草稿（仅 EDITING 且从未发布）
       responses:
         "204": { description: 已删除 }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
 
@@ -357,6 +379,14 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RouteDraftDetail" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
         "412":
           $ref: "#/components/responses/PreconditionFailed"
         "422":
@@ -384,6 +414,12 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Submission" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
         "422":
@@ -402,6 +438,12 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RouteDraft" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
 
@@ -461,6 +503,12 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ReviewTask" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
 
   /review/tasks/{task_id}/decision:
     post:
@@ -507,6 +555,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SubmissionDetail" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -598,9 +648,17 @@ paths:
             enum: [official, user]
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/Limit"
+        - name: If-None-Match
+          in: header
+          schema: { type: string }
       responses:
         "200":
           description: 路线分页（只含已发布）
+          headers:
+            ETag:
+              schema: { type: string }
+            Cache-Control:
+              schema: { type: string, example: "public, max-age=60" }
           content:
             application/json:
               schema:
@@ -610,6 +668,8 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/RouteSummary" }
                   next_cursor: { type: [string, "null"] }
+        "304":
+          description: 未变更（If-None-Match 命中）
 
   /routes/{route_id}:
     get:
@@ -627,10 +687,16 @@ paths:
           headers:
             ETag:
               schema: { type: string }
+            Cache-Control:
+              schema: { type: string, example: "public, max-age=60" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RouteDetail" }
-        "304": { description: 未变更 }
+        "304":
+          description: 未变更
+          headers:
+            ETag:
+              schema: { type: string }
         "404":
           description: 不存在或未发布（两者同码，防信息泄露）
           content:
@@ -983,7 +1049,8 @@ components:
       name: Idempotency-Key
       in: header
       required: true
-      schema: { type: string, format: uuid }
+      description: 同一请求重试时带上同一个 key，服务端返回首次结果；8–64 字符。
+      schema: { type: string, minLength: 8, maxLength: 64 }
     IfMatch:
       name: If-Match
       in: header
@@ -1207,12 +1274,12 @@ components:
       type: object
       required: [title]
       properties:
-        title: { type: string, maxLength: 60 }
-        summary: { type: string, maxLength: 300 }
+        title: { type: string, minLength: 1, maxLength: 60 }
+        summary: { type: [string, "null"], maxLength: 300 }
         theme_tags:
           type: array
           items: { type: string }
-        duration_minutes: { type: integer }
+        duration_minutes: { type: [integer, "null"] }
         audience:
           type: array
           description: 适合人群（多选），发现页可作为筛选条件
@@ -1221,12 +1288,12 @@ components:
     RouteDraftPatch:
       type: object
       properties:
-        title: { type: string, maxLength: 60 }
-        summary: { type: string, maxLength: 300 }
+        title: { type: string, minLength: 1, maxLength: 60 }
+        summary: { type: [string, "null"], maxLength: 300 }
         theme_tags:
           type: array
           items: { type: string }
-        duration_minutes: { type: integer }
+        duration_minutes: { type: [integer, "null"] }
         audience:
           type: array
           items: { $ref: "#/components/schemas/Audience" }
@@ -1236,7 +1303,7 @@ components:
       required: [id, title, state, lock_version]
       properties:
         id: { type: string, format: uuid }
-        route_id: { type: string, format: uuid }
+        route_id: { type: [string, "null"], format: uuid }
         title: { type: string }
         summary: { type: [string, "null"] }
         audience:
@@ -1258,12 +1325,22 @@ components:
                 type: object
                 properties:
                   position: { type: integer }
-                  place: { $ref: "#/components/schemas/Place" }
+                  place:
+                    description: 地点被删/下线时为 null，此时 place_missing 为 true。
+                    oneOf:
+                      - $ref: "#/components/schemas/Place"
+                      - type: "null"
+                  place_missing: { type: boolean, default: false }
                   stay_minutes: { type: integer }
-                  transport: { type: string }
+                  transport:
+                    type: [string, "null"]
+                    enum: [walk, metro, bus, taxi, bike]
                   note: { type: [string, "null"] }
                   price_min: { type: [integer, "null"] }
                   price_max: { type: [integer, "null"] }
+                  media_asset_ids:
+                    type: array
+                    items: { type: string, format: uuid }
             cost:
               $ref: "#/components/schemas/CostSummary"
 
@@ -1480,7 +1557,12 @@ components:
                       type: object
                       properties:
                         order: { type: integer }
-                        place: { $ref: "#/components/schemas/Place" }
+                        place:
+                          description: 地点被删/下线时为 null，此时 place_missing 为 true。
+                          oneOf:
+                            - $ref: "#/components/schemas/Place"
+                            - type: "null"
+                        place_missing: { type: boolean, default: false }
                         stay_minutes: { type: integer }
                         transport: { type: string }
                         price_min: { type: [integer, "null"] }

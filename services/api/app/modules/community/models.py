@@ -68,6 +68,9 @@ class Comment(Base):
     __tablename__ = "comments"
     __table_args__ = (
         Index("ix_comments_route_created", "route_id", "created_at"),
+        # 同一用户同一个 Idempotency-Key 只落一条评论：重试回放首次结果，
+        # 而不是插第二行。key 可空，普通评论不受影响（NULL 在唯一约束里互不相等）。
+        UniqueConstraint("user_id", "idempotency_key", name="uq_comments_user_idempotency_key"),
         # 每条路线最多一条置顶（docs/02 §2.5）。部分唯一索引只在 pinned 为真时生效，
         # 普通评论可以无限多条；PG 与 SQLite 都支持部分索引，测试库也能兜住并发置顶。
         Index(
@@ -91,6 +94,9 @@ class Comment(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )
+    # 发表评论时的幂等键与请求体指纹；都为 NULL 表示这条评论不是按 key 去重写的。
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    request_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class Favorite(Base):
