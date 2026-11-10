@@ -650,7 +650,7 @@ def test_cannot_review_own_submission(
         json={"action": "approve"},
     )
     assert conflict.status_code == 403
-    assert _code(conflict) == "CANNOT_REVIEW_OWN_SUBMISSION"
+    assert _code(conflict) == "SELF_REVIEW_FORBIDDEN"
 
 
 # ===== 第二批：租约过期的 SQLite 时区 / 发布唯一性 =====

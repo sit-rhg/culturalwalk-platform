@@ -491,7 +491,7 @@ class ModerationService:
             raise NotFound("投稿不存在", code="SUBMISSION_NOT_FOUND")
         if submission.submitted_by == reviewer_id:
             # 利益冲突：自己的稿子不能自己批。
-            raise Forbidden("不能审核自己的投稿", code="CANNOT_REVIEW_OWN_SUBMISSION")
+            raise Forbidden("不能审核自己的投稿", code="SELF_REVIEW_FORBIDDEN")
         if submission.state is not SubmissionState.PENDING_REVIEW:
             raise Conflict("投稿当前不在待审核状态", code="SUBMISSION_NOT_PENDING")
 
