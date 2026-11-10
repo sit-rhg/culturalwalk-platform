@@ -636,4 +636,3 @@ def test_detail_keeps_missing_place_as_placeholder(client: TestClient, db_sessio
     assert items[0]["position"] == 1
     assert items[0]["place"] is None
     assert items[0]["place_missing"] is True
-
