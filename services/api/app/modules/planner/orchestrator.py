@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 from time import perf_counter
 from typing import Final
@@ -82,11 +82,13 @@ class Orchestrator:
         *,
         place_source: PlaceSource | None = None,
         agents: Sequence[Agent] | None = None,
+        on_step: Callable[[StepRecord], None] | None = None,
     ) -> None:
         if agents is None:
             self.agents: list[Agent] = build_default_agents(place_source)
         else:
             self.agents = list(agents)
+        self.on_step = on_step
         self._assert_order()
 
     def _assert_order(self) -> None:
@@ -119,15 +121,18 @@ class Orchestrator:
                     failed_agent=agent.name,
                     error_code=AGENT_FAILED_CODE,
                 )
-            steps.append(
-                StepRecord(
-                    agent=agent.name,
-                    status=AgentStepStatus.DONE,
-                    duration_ms=_elapsed_ms(started),
-                    output_digest=context_digest(ctx),
-                    degraded=ctx.llm_degraded,
-                )
+            record = StepRecord(
+                agent=agent.name,
+                status=AgentStepStatus.DONE,
+                duration_ms=_elapsed_ms(started),
+                output_digest=context_digest(ctx),
+                degraded=ctx.llm_degraded,
             )
+            steps.append(record)
+            if self.on_step is not None:
+                # 每跑完一个岗位续一次租约：四个岗位串起来可能超过一个租期，
+                # 不续的话任务会被别的 worker 当"死掉"重新领走，两个人同时跑同一份行程。
+                self.on_step(record)
         return RunResult(ok=True, context=ctx, steps=steps)
 
 

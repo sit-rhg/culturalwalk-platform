@@ -174,3 +174,14 @@ class PlaceFactCreateIn(BaseModel):
     @classmethod
     def _claim_not_blank(cls, value: str) -> str:
         return _required_text(value)
+
+
+class PlaceStatusUpdateIn(BaseModel):
+    """PATCH /places/{place_id} 的请求体（D9）。
+
+    只放开「收录状态」一个字段：草稿点位补完资料后要能发布，
+    发布错了要能撤回；改名字、改坐标属于另一件事（还涉及审核与历史版本），
+    不在这张卡里顺手做。
+    """
+
+    status: Literal["draft", "verified"]

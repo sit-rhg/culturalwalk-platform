@@ -21,6 +21,7 @@ from app.modules.catalog.schemas import (
     PlaceFactOut,
     PlaceListOut,
     PlaceOut,
+    PlaceStatusUpdateIn,
 )
 from app.modules.catalog.service import CatalogService
 
@@ -77,6 +78,35 @@ def create_place(
 @router.get("/{place_id}", summary="地点详情（含事实与来源）", response_model=PlaceDetailOut)
 def get_place(place_id: uuid.UUID, db: DbDep) -> PlaceDetailOut:
     return CatalogService(db).get_place(place_id)
+
+
+@router.patch(
+    "/{place_id}",
+    summary="改收录状态：草稿 ↔ 已核实（编辑）",
+    response_model=PlaceDetailOut,
+    responses={
+        403: {"description": "需要编辑/管理员权限"},
+        404: {"description": "地点不存在"},
+    },
+)
+def update_place_status(
+    place_id: uuid.UUID,
+    payload: PlaceStatusUpdateIn,
+    user: EditorDep,
+    db: DbDep,
+    request: Request,
+) -> PlaceDetailOut:
+    """把草稿点位发布成 verified，或把误发布的地点撤回成 draft。
+
+    没有这个端点时，新建的地点永远停在 draft、公开列表永远读不到，
+    只能进库手改——审核动作变成手工运维，也没人知道是谁改的（D9）。
+    """
+    return CatalogService(db).update_status(
+        place_id,
+        status=payload.status,
+        actor=user,
+        request_id=_request_id(request),
+    )
 
 
 @router.post(

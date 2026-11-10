@@ -227,6 +227,30 @@ paths:
               schema: { $ref: "#/components/schemas/PlaceDetail" }
         "404":
           $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [places]
+      summary: 改收录状态：草稿 ↔ 已核实（编辑）
+      description: |
+        草稿点位补完资料后发布成 verified，公开列表与行程才能读到；
+        误发布时撤回成 draft。只改 `status` 一个字段。
+        状态没变时按原样返回（幂等），不重复写审计。
+      parameters:
+        - $ref: "#/components/parameters/PlaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PlaceStatusUpdateInput" }
+      responses:
+        "200":
+          description: 修改后的地点
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlaceDetail" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /places/{place_id}/facts:
     post:
@@ -866,6 +890,7 @@ paths:
         - $ref: "#/components/parameters/PlanId"
       responses:
         "204": { description: 已删除 }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /plans/{plan_id}/to-draft:
     post:
@@ -1217,6 +1242,15 @@ components:
           default: OGC:CRS84
           description: 提交坐标所用的坐标系；响应会原样回显，避免 GCJ-02 被当成 WGS84。
 
+    PlaceStatusUpdateInput:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [draft, verified]
+          description: 目标状态。draft 只在编辑端可见；verified 才会被公开列表与行程读到。
+
     PlaceFact:
       type: object
       required: [id, claim, confidence]
@@ -1558,10 +1592,10 @@ components:
                       properties:
                         order: { type: integer }
                         place:
-                          description: 地点被删/下线时为 null，此时 place_missing 为 true。
-                          oneOf:
+                          anyOf:
                             - $ref: "#/components/schemas/Place"
                             - type: "null"
+                          description: 点位资料查不到、或地点被删/下线时为 null，此时 place_missing 为 true。
                         place_missing: { type: boolean, default: false }
                         stay_minutes: { type: integer }
                         transport: { type: string }

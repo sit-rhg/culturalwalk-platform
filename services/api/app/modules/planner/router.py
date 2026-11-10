@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.deps import CurrentUser, CurrentUserDep
-from app.core.errors import Unauthorized
+from app.core.errors import Unauthorized, ValidationFailed
 from app.core.pagination import DEFAULT_LIMIT, MAX_LIMIT
 from app.modules.planner.schemas import (
     PlanDetailOut,
@@ -44,6 +44,21 @@ def _request_id(request: Request) -> str | None:
     return getattr(request.state, "request_id", None)
 
 
+def _idempotency_key(raw: str) -> str:
+    """按契约规整 Idempotency-Key：去空白并校验 8–64 个字符。
+
+    契约只声明长度（docs/api/openapi.yaml 的 IdempotencyKey），不要求 UUID：
+    强制 UUID 会把契约允许的 `order-1` 这类 key 判成 422，前后端口径也会打架。
+    """
+    key = raw.strip()
+    if not 8 <= len(key) <= 64:
+        raise ValidationFailed(
+            "Idempotency-Key 长度必须是 8-64 个字符",
+            details=[{"field": "Idempotency-Key", "reason": "长度必须是 8-64"}],
+        )
+    return key
+
+
 @router.post(
     "",
     response_model=PlanOut,
@@ -65,7 +80,7 @@ def create_plan(
     created = PlannerService(db).create_plan(
         user_id=_user_uuid(user),
         payload=payload,
-        idempotency_key=idempotency_key,
+        idempotency_key=_idempotency_key(idempotency_key),
     )
     return PlanOut.from_itinerary(created.itinerary, run_id=created.run.id)
 
@@ -124,7 +139,7 @@ def plan_to_draft(
     draft_id = PlannerService(db).to_draft(
         user_id=_user_uuid(user),
         plan_id=plan_id,
-        idempotency_key=idempotency_key,
+        idempotency_key=_idempotency_key(idempotency_key),
     )
     return ToDraftOut(draft_id=draft_id)
 
