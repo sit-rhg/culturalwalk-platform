@@ -40,6 +40,7 @@ from app.core.pagination import decode_cursor, encode_cursor
 from app.modules.audit.service import AuditService
 from app.modules.identity.service import IdentityService
 from app.modules.moderation.models import (
+    ModerationIdempotencyResponse,
     Publication,
     PublicationState,
     ReviewAction,
@@ -52,7 +53,10 @@ from app.modules.moderation.models import (
 from app.modules.moderation.repository import ModerationRepository
 from app.modules.moderation.schemas import (
     DecisionRequest,
+    PublicationOut,
     PublishRequest,
+    ReviewTaskOut,
+    SubmissionOut,
     SubmitRequest,
     UnpublishRequest,
 )
@@ -63,12 +67,25 @@ from app.modules.notifications.service import (
     NotificationsService,
 )
 from app.modules.routes.models import DraftState, RouteDraft, RouteVersion
+from app.modules.routes.schemas import RouteDraftOut
 from app.modules.routes.service import RoutesService
 
 # 允许的审核角色。仓库只有 user/editor/admin 三种角色，没有独立的 reviewer：
 # reviewer 的职责按 docs/00 §5 由 editor/admin 承担（admin 是 editor 的超集，
 # 见 core/deps.CurrentUser.is_admin）。这里不放宽成 user。
 _REVIEW_ROLES = ("editor", "admin")
+
+# 幂等重放要还原的响应模型与首次响应的状态码；scope 同时用作快照的命名空间。
+_RESPONSE_MODELS: dict[str, type[BaseModel]] = {
+    "submit": SubmissionOut,
+    "withdraw": RouteDraftOut,
+    "claim": ReviewTaskOut,
+    "release": ReviewTaskOut,
+    "decide": ReviewTaskOut,
+    "publish": PublicationOut,
+    "unpublish": PublicationOut,
+}
+_FIRST_STATUS: dict[str, int] = {"submit": 201, "publish": 201}
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -145,7 +162,10 @@ class ModerationService:
         existing = self.repo.get_submission_by_submit_key(draft_id=draft_id, key=idempotency_key)
         if existing is not None:
             self._ensure_same_request(existing.submit_hash, request_hash)
-            return existing
+            replayed = self._replayed_response(
+                actor_id=author_id, scope="submit", key=idempotency_key, request_hash=request_hash
+            )
+            return replayed if replayed is not None else existing
 
         draft = self._load_owned_draft(draft_id=draft_id, owner_id=author_id)
         self._check_lock_version(draft, expected_lock_version)
@@ -189,6 +209,13 @@ class ModerationService:
             request_id=request_id,
         )
         self.db.flush()
+        self._remember_response(
+            actor_id=author_id,
+            scope="submit",
+            key=idempotency_key,
+            request_hash=request_hash,
+            entity=submission,
+        )
         return submission
 
     def _supersede_previous(self, *, draft_id: uuid.UUID) -> None:
@@ -276,6 +303,13 @@ class ModerationService:
             request_id=request_id,
         )
         self.db.flush()
+        self._remember_response(
+            actor_id=author_id,
+            scope="withdraw",
+            key=idempotency_key,
+            request_hash=request_hash,
+            entity=draft,
+        )
         return draft
 
     # ===== 审核队列 =====
@@ -308,6 +342,11 @@ class ModerationService:
         reviewer_id = _user_id_of(reviewer)
         request_hash = _input_hash(None)
         task = self._load_task(task_id)
+        replayed = self._replayed_response(
+            actor_id=reviewer_id, scope="claim", key=idempotency_key, request_hash=request_hash
+        )
+        if replayed is not None:
+            return replayed
         if task.claim_key == idempotency_key:
             self._ensure_same_request(task.claim_hash, request_hash)
             return task
@@ -341,6 +380,13 @@ class ModerationService:
             request_id=request_id,
         )
         self.db.flush()
+        self._remember_response(
+            actor_id=reviewer_id,
+            scope="claim",
+            key=idempotency_key,
+            request_hash=request_hash,
+            entity=task,
+        )
         return task
 
     # ===== 释放任务 =====
@@ -355,6 +401,11 @@ class ModerationService:
         reviewer_id = _user_id_of(reviewer)
         request_hash = _input_hash(None)
         task = self._load_task(task_id)
+        replayed = self._replayed_response(
+            actor_id=reviewer_id, scope="release", key=idempotency_key, request_hash=request_hash
+        )
+        if replayed is not None:
+            return replayed
         if task.release_key == idempotency_key:
             self._ensure_same_request(task.release_hash, request_hash)
             return task
@@ -390,6 +441,13 @@ class ModerationService:
             request_id=request_id,
         )
         self.db.flush()
+        self._remember_response(
+            actor_id=reviewer_id,
+            scope="release",
+            key=idempotency_key,
+            request_hash=request_hash,
+            entity=task,
+        )
         return task
 
     # ===== 审核决定 =====
@@ -405,6 +463,11 @@ class ModerationService:
         reviewer_id = _user_id_of(reviewer)
         request_hash = _input_hash(payload)
         task = self._load_task(task_id)
+        replayed = self._replayed_response(
+            actor_id=reviewer_id, scope="decide", key=idempotency_key, request_hash=request_hash
+        )
+        if replayed is not None:
+            return replayed
         if task.decision_key == idempotency_key:
             self._ensure_same_request(task.decision_hash, request_hash)
             return task
@@ -499,6 +562,13 @@ class ModerationService:
         self._notify_author(submission=submission, draft=draft, decision=decision, reason=reason)
         self.db.refresh(task)
         self.db.flush()
+        self._remember_response(
+            actor_id=reviewer_id,
+            scope="decide",
+            key=idempotency_key,
+            request_hash=request_hash,
+            entity=task,
+        )
         return task
 
     def _notify_author(
@@ -586,6 +656,11 @@ class ModerationService:
         if submission is None:
             raise NotFound("投稿不存在", code="SUBMISSION_NOT_FOUND")
 
+        replayed = self._replayed_response(
+            actor_id=actor_id, scope="publish", key=idempotency_key, request_hash=request_hash
+        )
+        if replayed is not None:
+            return replayed
         existing = self.repo.get_publication_by_publish_key(
             submission_id=submission.id, key=idempotency_key
         )
@@ -661,6 +736,13 @@ class ModerationService:
             request_id=request_id,
         )
         self.db.flush()
+        self._remember_response(
+            actor_id=actor_id,
+            scope="publish",
+            key=idempotency_key,
+            request_hash=request_hash,
+            entity=publication,
+        )
         return publication
 
     def _resolve_route_id(self, *, draft: RouteDraft | None, version: RouteVersion) -> uuid.UUID:
@@ -700,6 +782,11 @@ class ModerationService:
         publication = self.repo.get_publication(publication_id)
         if publication is None:
             raise NotFound("发布记录不存在", code="PUBLICATION_NOT_FOUND")
+        replayed = self._replayed_response(
+            actor_id=actor_id, scope="unpublish", key=idempotency_key, request_hash=request_hash
+        )
+        if replayed is not None:
+            return replayed
         if publication.unpublish_key == idempotency_key:
             self._ensure_same_request(publication.unpublish_hash, request_hash)
             return publication
@@ -726,6 +813,13 @@ class ModerationService:
             request_id=request_id,
         )
         self.db.flush()
+        self._remember_response(
+            actor_id=actor_id,
+            scope="unpublish",
+            key=idempotency_key,
+            request_hash=request_hash,
+            entity=publication,
+        )
         return publication
 
     # ===== 内部 =====
@@ -774,3 +868,37 @@ class ModerationService:
                 "同一个 Idempotency-Key 被用于不同的请求体",
                 code="IDEMPOTENCY_KEY_REUSED",
             )
+
+    def _replayed_response(
+        self, *, actor_id: uuid.UUID, scope: str, key: str, request_hash: str
+    ) -> BaseModel | None:
+        """命中首次响应快照就原样返回；同 key 不同请求体仍按 409 拒绝。
+
+        快照缺失时返回 None，调用方回退到实体上的 key 列（兼容旧数据）。
+        """
+        record = self.repo.get_idempotency_response(actor_id=actor_id, scope=scope, key=key)
+        if record is None:
+            return None
+        self._ensure_same_request(record.request_hash, request_hash)
+        return _RESPONSE_MODELS[scope].model_validate(record.response_body)
+
+    def _remember_response(
+        self, *, actor_id: uuid.UUID, scope: str, key: str, request_hash: str, entity: Any
+    ) -> None:
+        """首次成功请求落一份响应快照；并发撞唯一约束说明别人先存了，忽略即可。"""
+        body = _RESPONSE_MODELS[scope].model_validate(entity).model_dump(mode="json")
+        try:
+            with self.db.begin_nested():
+                self.repo.add_idempotency_response(
+                    ModerationIdempotencyResponse(
+                        actor_id=actor_id,
+                        scope=scope,
+                        key=key,
+                        request_hash=request_hash,
+                        response_status=_FIRST_STATUS.get(scope, 200),
+                        response_body=body,
+                    )
+                )
+        except IntegrityError:
+            # 外层事务不受影响：SAVEPOINT 已回滚，调用方照常返回自己的实体。
+            pass

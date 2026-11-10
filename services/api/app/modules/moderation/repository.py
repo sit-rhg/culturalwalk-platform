@@ -12,6 +12,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from app.modules.moderation.models import (
+    ModerationIdempotencyResponse,
     Publication,
     PublicationState,
     ReviewTask,
@@ -243,3 +244,21 @@ class ModerationRepository:
             Publication.state == PublicationState.PUBLISHED,
         )
         return self.db.scalars(stmt).first()
+
+    # ===== 幂等重放快照 =====
+    def get_idempotency_response(
+        self, *, actor_id: uuid.UUID, scope: str, key: str
+    ) -> ModerationIdempotencyResponse | None:
+        stmt = select(ModerationIdempotencyResponse).where(
+            ModerationIdempotencyResponse.actor_id == actor_id,
+            ModerationIdempotencyResponse.scope == scope,
+            ModerationIdempotencyResponse.key == key,
+        )
+        return self.db.scalars(stmt).first()
+
+    def add_idempotency_response(
+        self, record: ModerationIdempotencyResponse
+    ) -> ModerationIdempotencyResponse:
+        self.db.add(record)
+        self.db.flush()
+        return record

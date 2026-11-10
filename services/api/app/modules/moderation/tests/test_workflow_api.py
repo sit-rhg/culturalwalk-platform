@@ -730,3 +730,79 @@ def test_first_publish_route_id_is_deterministic(
     assert response.json()["route_id"] == str(
         uuid.uuid5(uuid.NAMESPACE_URL, f"culturalwalk:route-draft:{draft_id}")
     )
+
+
+# ===== B8 幂等重放返回首次响应 =====
+def test_publish_replay_returns_first_response_after_unpublish(
+    client: TestClient,
+    user_headers: dict[str, str],
+    editor_headers: dict[str, str],
+) -> None:
+    """publish(K1) → unpublish → K1 重放：201 + 首次响应的 PUBLISHED，不是当前 UNPUBLISHED。"""
+    draft_id = _create_draft(client, user_headers, title="发布后下线再重放")
+    submission = _submit(client, user_headers, draft_id)
+    approved, _task = _approve(client, editor_headers, submission["id"])
+
+    key = _new_key()
+    url = f"{API}/submissions/{submission['id']}/publish"
+    headers = {**editor_headers, "Idempotency-Key": key}
+    payload = _publish_payload(approved)
+
+    first = client.post(url, headers=headers, json=payload)
+    assert first.status_code == 201, first.text
+    publication = first.json()
+    assert publication["state"] == "PUBLISHED"
+    first_published_at = publication["published_at"]
+
+    offline = client.post(
+        f"{API}/publications/{publication['id']}/unpublish",
+        headers={**editor_headers, "Idempotency-Key": _new_key()},
+        json={"reason": "先下线再验证重放"},
+    )
+    assert offline.status_code == 200, offline.text
+    assert offline.json()["state"] == "UNPUBLISHED"
+
+    replay = client.post(url, headers=headers, json=payload)
+    assert replay.status_code == 201, replay.text
+    assert replay.json()["id"] == publication["id"]
+    assert replay.json()["state"] == "PUBLISHED"
+    assert replay.json()["published_at"] == first_published_at
+
+
+def test_claim_replay_returns_first_response_after_lease_reclaimed(
+    client: TestClient,
+    db_session: Session,
+    user_headers: dict[str, str],
+    editor_headers: dict[str, str],
+) -> None:
+    """claim(K1) → 租约过期被回收 → K1 重放：200 + 首次 CLAIMED，不是回收后的 OPEN。"""
+    draft_id = _create_draft(client, user_headers, title="领取后租约回收再重放")
+    submission = _submit(client, user_headers, draft_id)
+    task = _task_for(client, editor_headers, submission["id"])
+
+    key = _new_key()
+    url = f"{API}/review/tasks/{task['id']}/claim"
+    headers = {**editor_headers, "Idempotency-Key": key}
+    first = client.post(url, headers=headers)
+    assert first.status_code == 200, first.text
+    assert first.json()["state"] == "CLAIMED"
+    first_lease = first.json()["lease_expires_at"]
+    assert first_lease is not None
+
+    # 把租约改到过去，再用读队列触发惰性回收，任务回到 OPEN。
+    db_session.execute(
+        update(ReviewTaskModel)
+        .where(ReviewTaskModel.id == uuid.UUID(task["id"]))
+        .values(lease_expires_at=datetime.now(UTC) - timedelta(minutes=1))
+    )
+    db_session.commit()
+    listed = client.get(f"{API}/review/tasks", headers=editor_headers, params={"limit": 50})
+    assert listed.status_code == 200, listed.text
+    recycled = next(t for t in listed.json()["items"] if t["id"] == task["id"])
+    assert recycled["state"] == "OPEN"
+
+    replay = client.post(url, headers=headers)
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["id"] == task["id"]
+    assert replay.json()["state"] == "CLAIMED"
+    assert replay.json()["lease_expires_at"] == first_lease
