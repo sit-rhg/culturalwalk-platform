@@ -15,7 +15,7 @@ import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
-from app.core.deps import AdminDep, CurrentUser, create_access_token, require_role
+from app.core.deps import AdminDep, CurrentUser, EditorDep, create_access_token, require_role
 from app.core.errors import AppError, app_error_handler
 
 EDITOR_ID = "33333333-3333-3333-3333-333333333333"
@@ -46,6 +46,10 @@ def _build_probe_app() -> FastAPI:
 
     @probe.get("/probe/legacy-admin")
     def legacy_admin(user: AdminDep) -> dict[str, str]:
+        return {"role": user.role}
+
+    @probe.get("/probe/editor-write")
+    def editor_write(user: EditorDep) -> dict[str, str]:
         return {"role": user.role}
 
     return probe
@@ -129,11 +133,20 @@ def test_require_role_without_roles_still_401_for_anonymous(probe_client: TestCl
     assert resp.json()["error"]["code"] == "UNAUTHORIZED"
 
 
-def test_require_admin_still_accepts_editor(
+def test_require_admin_rejects_editor(
     probe_client: TestClient, editor_headers: dict[str, str]
 ) -> None:
-    """require_admin 改成 require_role("admin", "editor") 后行为必须不变。"""
+    """审计、账号这类管理动作只给 admin；编辑不该跟着拿到。"""
     resp = probe_client.get("/probe/legacy-admin", headers=editor_headers)
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "FORBIDDEN"
+
+
+def test_require_editor_accepts_editor(
+    probe_client: TestClient, editor_headers: dict[str, str]
+) -> None:
+    """审核决定、录点位是编辑的活：EditorDep 必须放行。"""
+    resp = probe_client.get("/probe/editor-write", headers=editor_headers)
     assert resp.status_code == 200
     assert resp.json() == {"role": "editor"}
 

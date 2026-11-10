@@ -129,10 +129,16 @@ class RouteNodesReplace(BaseModel):
 
 
 class RouteNodeOut(BaseModel):
-    """详情里的节点：place 是公开 Place 形状（含 status，便于前端提示已下线）。"""
+    """详情里的节点：place 是公开 Place 形状（含 status，便于前端提示已下线）。
+
+    地点在加入草稿之后被下线/删除时，节点仍然保留：place 为 null、place_missing
+    为 true，让作者知道哪一站需要替换；费用按未知计（不能拿失效地点的价格
+    假装总额可信）。
+    """
 
     position: int
-    place: PlaceOut
+    place: PlaceOut | None = None
+    place_missing: bool = False
     stay_minutes: int
     transport: TransportMode | None = None
     note: str | None = None
