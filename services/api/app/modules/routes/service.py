@@ -11,6 +11,7 @@ import hashlib
 import json
 import uuid
 from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pydantic import BaseModel
@@ -23,7 +24,13 @@ from app.core.pagination import decode_cursor, encode_cursor
 from app.modules.catalog.schemas import PlaceOut
 from app.modules.catalog.service import CatalogService
 from app.modules.media.service import MediaService
-from app.modules.routes.models import DraftState, RouteDraft, RouteNode, RouteVersion
+from app.modules.routes.models import (
+    DraftState,
+    RouteDraft,
+    RouteIdempotencyRecord,
+    RouteNode,
+    RouteVersion,
+)
 from app.modules.routes.repository import RoutesRepository
 from app.modules.routes.schemas import (
     CostSummaryOut,
@@ -78,6 +85,20 @@ def _clean_tags(tags: list[str]) -> list[str]:
         if cleaned:
             seen.setdefault(cleaned, None)
     return list(seen)
+
+
+# docs/03 §1.2：服务端把 key → 首次响应存 24 小时，过期后同一个 key 可以重新使用。
+_IDEMPOTENCY_TTL = timedelta(hours=24)
+
+
+def _now() -> datetime:
+    """幂等记录的生命周期从写入时刻算起，统一用 UTC。"""
+    return datetime.now(UTC)
+
+
+def _as_utc(value: datetime) -> datetime:
+    """SQLite 取回来是 naive，按 UTC 解释；否则和 aware 相减会抛 TypeError。"""
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 class RoutesService:
@@ -179,6 +200,85 @@ class RoutesService:
             )
         return draft
 
+    # ===== PATCH / PUT 幂等（docs/03 §1.2） =====
+    def _start_idempotent(
+        self,
+        *,
+        actor_id: uuid.UUID,
+        draft_id: uuid.UUID,
+        operation: str,
+        key: str,
+        request_hash: str,
+    ) -> tuple[RouteIdempotencyRecord | None, dict[str, Any] | None]:
+        """占一个 (actor, draft, operation, key) 槽位，或返回该 key 存下的首次响应。
+
+        预占必须发生在写业务数据之前：并发同 key 由唯一约束裁决，败者在保存点
+        回滚后重查胜者，不会把半成品返回给调用方。
+        """
+        record = self.repo.get_route_idempotency(
+            actor_id=actor_id, draft_id=draft_id, operation=operation, key=key
+        )
+        if record is not None and _now() - _as_utc(record.created_at) > _IDEMPOTENCY_TTL:
+            # 过期 key 允许重新使用：覆盖旧记录，等于给这个 key 一次新生。
+            record.request_hash = request_hash
+            record.response_status = 200
+            record.response_body = {}
+            record.created_at = _now()
+            self.db.flush()
+            return record, None
+        if record is not None:
+            return None, self._replay(record, request_hash=request_hash)
+
+        try:
+            with self.db.begin_nested():
+                record = RouteIdempotencyRecord(
+                    actor_id=actor_id,
+                    draft_id=draft_id,
+                    operation=operation,
+                    key=key,
+                    request_hash=request_hash,
+                    response_status=200,
+                    response_body={},
+                )
+                self.db.add(record)
+        except IntegrityError:
+            # 并发下两个请求都通过了"先查"：后到的撞唯一约束，回滚后取先落库的那份。
+            record = self.repo.get_route_idempotency(
+                actor_id=actor_id, draft_id=draft_id, operation=operation, key=key
+            )
+            if record is None:  # 撞的是别的约束，不是幂等键
+                raise
+            return None, self._replay(record, request_hash=request_hash)
+        return record, None
+
+    def _replay(self, record: RouteIdempotencyRecord, *, request_hash: str) -> dict[str, Any]:
+        """同一个 key 的重复请求：内容一致就还首次响应，不一致报 409。"""
+        if record.request_hash != request_hash:
+            raise Conflict(
+                "这个 Idempotency-Key 已经用于另一份不同的请求体，请换一个新的 key",
+                code="IDEMPOTENCY_KEY_REUSED",
+                details=[
+                    {
+                        "field": "Idempotency-Key",
+                        "reason": "already_used_with_different_body",
+                    }
+                ],
+            )
+        if not record.response_body:
+            # 预占成功但还没写出结果（同一事务里不可见），请求方重试即可。
+            raise Conflict("上一次请求仍在处理中，请稍后重试", code="IDEMPOTENCY_IN_PROGRESS")
+        return record.response_body
+
+    def _finish_idempotent(
+        self, record: RouteIdempotencyRecord | None, *, response: BaseModel
+    ) -> None:
+        """写成功后把响应快照存进记录；重放时原样返回首次结果。"""
+        if record is None:
+            return
+        record.response_status = 200
+        record.response_body = response.model_dump(mode="json")
+        self.db.flush()
+
     # ===== 草稿详情 =====
     def get_detail(self, *, draft_id: uuid.UUID, owner_id: uuid.UUID) -> RouteDraftDetailOut:
         draft = self._load_owned(draft_id=draft_id, owner_id=owner_id)
@@ -193,24 +293,20 @@ class RoutesService:
         payload: RouteDraftPatch,
         if_match: int,
         idempotency_key: str,
-    ) -> RouteDraft:
+    ) -> RouteDraftOut:
         draft = self._load_owned(draft_id=draft_id, owner_id=owner_id)
         request_hash = _input_hash(payload, exclude_unset=True)
         # 幂等重放排在状态检查之前：先成功的写、事后再被锁定，
         # 重试仍该拿到那次成功的结果，而不是 409「已提交不能再改」。
-        if draft.patch_key == idempotency_key:
-            if draft.patch_hash != request_hash:
-                raise Conflict(
-                    "这个 Idempotency-Key 已经用于另一份不同的修改，请换一个新的 key",
-                    code="IDEMPOTENCY_KEY_REUSED",
-                    details=[
-                        {
-                            "field": "Idempotency-Key",
-                            "reason": "already_used_with_different_body",
-                        }
-                    ],
-                )
-            return draft
+        record, replay = self._start_idempotent(
+            actor_id=owner_id,
+            draft_id=draft_id,
+            operation="patch",
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if replay is not None:
+            return RouteDraftOut.model_validate(replay)
 
         if draft.state is not DraftState.EDITING:
             raise Conflict(
@@ -225,10 +321,11 @@ class RoutesService:
                 details=[{"field": "If-Match", "reason": "lock_version 已变化"}],
             )
 
-        values = self._patch_values(payload)
-        values["patch_key"] = idempotency_key
-        values["patch_hash"] = request_hash
-        updated = self.repo.patch_cas(draft_id=draft_id, expected_version=if_match, values=values)
+        updated = self.repo.patch_cas(
+            draft_id=draft_id,
+            expected_version=if_match,
+            values=self._patch_values(payload),
+        )
         if updated == 0:
             # 检查之后、写入之前被别人抢先改了：同样是版本冲突，不是 500。
             raise PreconditionFailed(
@@ -238,7 +335,9 @@ class RoutesService:
             )
 
         self.db.refresh(draft)
-        return draft
+        response = RouteDraftOut.model_validate(draft)
+        self._finish_idempotent(record, response=response)
+        return response
 
     # ===== 节点整表替换 =====
     def replace_nodes(
@@ -254,19 +353,15 @@ class RoutesService:
         request_hash = _input_hash(payload)
         # 和 PATCH 一样，重放判断排在状态检查之前：成功提交后草稿被锁定，
         # 客户端拿同一个 key 重试，应该拿到那次成功的结果，而不是 409。
-        if draft.nodes_key == idempotency_key:
-            if draft.nodes_hash != request_hash:
-                raise Conflict(
-                    "这个 Idempotency-Key 已经用于另一份不同的节点，请换一个新的 key",
-                    code="IDEMPOTENCY_KEY_REUSED",
-                    details=[
-                        {
-                            "field": "Idempotency-Key",
-                            "reason": "already_used_with_different_body",
-                        }
-                    ],
-                )
-            return self._detail(draft)
+        record, replay = self._start_idempotent(
+            actor_id=owner_id,
+            draft_id=draft_id,
+            operation="nodes",
+            key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if replay is not None:
+            return RouteDraftDetailOut.model_validate(replay)
 
         if draft.state is not DraftState.EDITING:
             raise Conflict(
@@ -289,7 +384,7 @@ class RoutesService:
         updated = self.repo.patch_cas(
             draft_id=draft_id,
             expected_version=if_match,
-            values={"nodes_key": idempotency_key, "nodes_hash": request_hash},
+            values={},
         )
         if updated == 0:
             raise PreconditionFailed(
@@ -319,7 +414,9 @@ class RoutesService:
             ],
         )
         self.db.refresh(draft)
-        return self._detail(draft, places=places)
+        detail = self._detail(draft, places=places)
+        self._finish_idempotent(record, response=detail)
+        return detail
 
     def _resolve_places(self, nodes: list[RouteNodeInput]) -> dict[uuid.UUID, PlaceOut]:
         """把节点引用的地点解析成公开 DTO；有一个不存在就整体 422。

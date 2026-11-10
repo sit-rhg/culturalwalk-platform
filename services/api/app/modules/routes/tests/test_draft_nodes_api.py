@@ -432,6 +432,35 @@ def test_replay_with_same_key_different_body_is_409(
     assert replay.json()["error"]["details"][0]["field"] == "Idempotency-Key"
 
 
+def test_retry_old_key_after_newer_put_returns_first_response(
+    client: TestClient, db_session: Session, user_headers: dict
+) -> None:
+    """K1 写 A、K2 写 B 之后再重试 K1：返回 K1 的快照，库里的节点仍是 B。"""
+    draft = _create_draft(client, user_headers)
+    first_place = _add_place(db_session, name="A")
+    second_place = _add_place(db_session, name="B")
+    first_key = _key()
+    second_key = _key()
+
+    first = _put(client, user_headers, draft["id"], [_node(first_place)], if_match=1, key=first_key)
+    assert first.status_code == 200, first.text
+    second = _put(
+        client, user_headers, draft["id"], [_node(second_place)], if_match=2, key=second_key
+    )
+    assert second.status_code == 200, second.text
+
+    replay = _put(
+        client, user_headers, draft["id"], [_node(first_place)], if_match=3, key=first_key
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["lock_version"] == 2
+    assert [node["place"]["name"] for node in replay.json()["nodes"]] == ["A"]
+
+    detail = client.get(f"{API}/{draft['id']}", headers=user_headers).json()
+    assert detail["lock_version"] == 3
+    assert [node["place"]["name"] for node in detail["nodes"]] == ["B"], "重放不能把节点改回 A"
+
+
 def test_failed_validation_does_not_write_partial_nodes(
     client: TestClient, db_session: Session, user_headers: dict
 ) -> None:
