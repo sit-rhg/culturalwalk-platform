@@ -244,12 +244,16 @@ class ModerationService:
         request_hash = _input_hash(None)
 
         draft = self._load_owned_draft(draft_id=draft_id, owner_id=author_id)
+        # 幂等键绑在「被撤回的那次投稿」上：重投之后用旧 key 重试，
+        # 只能回放原来那次撤回，不能把新投稿也撤掉（B6）。
+        replayed = self.repo.get_submission_by_withdraw_key(draft_id=draft.id, key=idempotency_key)
+        if replayed is not None:
+            self._ensure_same_request(replayed.withdraw_hash, request_hash)
+            return draft
+
         submission = self.repo.latest_submission(draft.id)
         if submission is None:
             raise Conflict("该草稿没有可撤回的投稿", code="SUBMISSION_NOT_FOUND")
-        if submission.withdraw_key == idempotency_key:
-            self._ensure_same_request(submission.withdraw_hash, request_hash)
-            return draft
 
         self._check_lock_version(draft, expected_lock_version)
         if draft.state is not DraftState.SUBMITTED_LOCKED:

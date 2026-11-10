@@ -42,6 +42,14 @@ class ModerationRepository:
         )
         return self.db.scalars(stmt).first()
 
+    def get_submission_by_withdraw_key(self, *, draft_id: uuid.UUID, key: str) -> Submission | None:
+        """按撤回幂等键找「被撤回的那次投稿」；重投之后 latest 已经不是它。"""
+        stmt = select(Submission).where(
+            Submission.draft_id == draft_id,
+            Submission.withdraw_key == key,
+        )
+        return self.db.scalars(stmt).first()
+
     def list_submissions_by_draft(self, draft_id: uuid.UUID) -> list[Submission]:
         stmt = select(Submission).where(Submission.draft_id == draft_id)
         return list(self.db.scalars(stmt))
