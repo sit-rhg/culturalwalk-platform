@@ -22,11 +22,11 @@ function jsonResponse(status: number, body: unknown): Response {
   })
 }
 
-function tokenPair(username = 'xiaoming'): unknown {
+function tokenPair(username = 'xiaoming', role = 'user'): unknown {
   return {
     access_token: 'access-1',
     refresh_token: 'refresh-1',
-    user: { id: 'u1', username, role: 'user' },
+    user: { id: 'u1', username, role },
   }
 }
 
@@ -56,13 +56,24 @@ describe('登录态', () => {
     expect(session.currentUser.value?.username).toBe('xiaoming')
   })
 
-  it('普通用户不是管理员，isAdmin 为 false', async () => {
+  it('普通用户不是管理员，isAdmin / canModerate 都为 false', async () => {
     vi.stubGlobal('fetch', fetchMock)
     fetchMock.mockResolvedValue(jsonResponse(200, tokenPair('normal')))
 
     await session.login('normal', 'cw123456')
 
     expect(session.isAdmin.value).toBe(false)
+    expect(session.canModerate.value).toBe(false)
+  })
+
+  it('编辑可以进审核台（canModerate），但不是管理员（isAdmin）', async () => {
+    vi.stubGlobal('fetch', fetchMock)
+    fetchMock.mockResolvedValue(jsonResponse(200, tokenPair('nina', 'editor')))
+
+    await session.login('nina', 'cw123456')
+
+    expect(session.isAdmin.value).toBe(false)
+    expect(session.canModerate.value).toBe(true)
   })
 
   it('退出接口 500 也要把本地登录态清干净', async () => {

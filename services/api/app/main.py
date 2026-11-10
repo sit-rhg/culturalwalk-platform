@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
-from app.core.deps import register_session_guard
+from app.core.deps import register_session_guard, register_user_guard
 from app.core.errors import (
     AppError,
     app_error_handler,
@@ -29,7 +29,7 @@ from app.modules.catalog.router import router as catalog_router
 from app.modules.community.router import router as community_router
 from app.modules.discovery.router import router as discovery_router
 from app.modules.identity.router import router as identity_router
-from app.modules.identity.service import session_is_revoked
+from app.modules.identity.service import session_is_revoked, user_is_inactive
 from app.modules.media.router import router as media_router
 from app.modules.moderation.router import router as moderation_router
 from app.modules.notifications.router import router as notifications_router
@@ -68,6 +68,7 @@ def create_app() -> FastAPI:
 
     # 登出/轮换后 access 令牌立刻失效，检查器由 identity 提供（core 不反向依赖模块）。
     register_session_guard(session_is_revoked)
+    register_user_guard(user_is_inactive)
 
     @app.middleware("http")
     async def commit_session(request: Request, call_next):  # type: ignore[no-untyped-def]

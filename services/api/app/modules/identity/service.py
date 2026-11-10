@@ -314,6 +314,20 @@ def _duplicate_conflict(exc: IntegrityError) -> Conflict:
     return Conflict("这个用户名已经被注册了")
 
 
+def user_is_inactive(db: Session, user_id: str) -> bool:
+    """access 令牌里的账号是否已停用。由 core.deps 注册、每个受保护请求调用。
+
+    用户行不存在（被删除）交给会话吊销兜底：删账号会连会话一起删，sid 检查会拦；
+    老令牌没有 sid 时这里放行，与 ID-02 之前的兼容口径一致。
+    """
+    try:
+        uid = uuid.UUID(user_id)
+    except ValueError:
+        return True
+    user = db.get(User, uid)
+    return user is not None and user.status != STATUS_ACTIVE
+
+
 def session_is_revoked(db: Session, session_id: str) -> bool:
     """access 令牌里的 sid 是否已不能再用。
 

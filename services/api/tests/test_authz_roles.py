@@ -56,7 +56,10 @@ def _build_probe_app() -> FastAPI:
 
 
 @pytest.fixture()
-def probe_client() -> Iterator[TestClient]:
+def probe_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    # 探针 app 不挂业务中间件，也就没有测试库：把账号状态守卫降级为放行。
+    # 这些用例只验证 require_role 的角色判定，账号停用由 identity 自己的用例覆盖。
+    monkeypatch.setattr("app.core.deps._user_guard", lambda _db, _user_id: False)
     with TestClient(_build_probe_app()) as test_client:
         yield test_client
 

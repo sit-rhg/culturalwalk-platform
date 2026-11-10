@@ -21,10 +21,20 @@ from app.core.errors import Forbidden, Unauthorized
 SessionGuard = Callable[[object, str], bool]
 _session_guard: SessionGuard | None = None
 
+# 「这个账号还能不能用」的检查同样由 identity 注册：core 不能反向 import 模块。
+# 返回 True 表示账号已停用/不可用。
+UserGuard = Callable[[object, str], bool]
+_user_guard: UserGuard | None = None
+
 
 def register_session_guard(guard: SessionGuard) -> None:
     global _session_guard
     _session_guard = guard
+
+
+def register_user_guard(guard: UserGuard) -> None:
+    global _user_guard
+    _user_guard = guard
 
 
 @dataclass(frozen=True)
@@ -84,6 +94,17 @@ def _assert_session_active(db: object, session_id: object) -> None:
         raise Unauthorized("登录已失效，请重新登录")
 
 
+def _assert_user_active(db: object, user_id: str) -> None:
+    """账号被停用后，手里还没过期的 access 令牌必须立刻作废。
+
+    只靠会话吊销兜不住：停用账号不会顺手删掉会话，旧令牌还能用满 900 秒。
+    """
+    if _user_guard is None:
+        raise Unauthorized("账号状态校验不可用，请重新登录")
+    if _user_guard(db, user_id):
+        raise Unauthorized("账号已停用，请联系管理员")
+
+
 def _user_from_auth_header(
     authorization: str | None, db: object, *, check_session: bool = True
 ) -> CurrentUser | None:
@@ -97,6 +118,7 @@ def _user_from_auth_header(
         raise Unauthorized("令牌类型错误")
     if check_session:
         _assert_session_active(db, payload.get("sid"))
+        _assert_user_active(db, payload["sub"])
     return CurrentUser(
         id=payload["sub"],
         username=payload["username"],
