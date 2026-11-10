@@ -23,6 +23,7 @@ import {
   stepState,
   type PlannerForm as PlannerFormState,
 } from '@/modules/planner-form/plan-form'
+import { createPlanSubmitter } from './submit'
 
 type PlanDay = NonNullable<PlanDetail['days_plan']>[number]
 
@@ -39,6 +40,9 @@ const POLL_MAX_ATTEMPTS = 20
 
 const form = ref<PlannerFormState>(defaultForm())
 const phase = ref<'form' | 'loading' | 'result'>('form')
+/** 提交中：按钮置灰，再点也不会多发一次请求 */
+const submitting = ref(false)
+const submitter = createPlanSubmitter()
 const errorMessage = ref('')
 const errorStatus = ref(0)
 const lastPayload = ref<PlanInput | null>(null)
@@ -138,6 +142,11 @@ async function holdStepReveal(startedAtMs: number): Promise<void> {
 }
 
 async function startPlan(payload: PlanInput): Promise<void> {
+  // 双击/连按：第一次请求还没回来就直接忽略后面的点击
+  const intentKey = submitter.begin(payload)
+  if (!intentKey) return
+  submitting.value = true
+
   errorMessage.value = ''
   errorStatus.value = 0
   draftError.value = ''
@@ -149,6 +158,8 @@ async function startPlan(payload: PlanInput): Promise<void> {
   if (!isLoggedIn.value) {
     errorMessage.value = '登录后才能生成行程'
     errorStatus.value = 401
+    submitting.value = false
+    submitter.end()
     return
   }
 
@@ -156,7 +167,8 @@ async function startPlan(payload: PlanInput): Promise<void> {
   const startedAt = Date.now()
   startSteps()
   try {
-    const created = await api.post<PlanDetail>('/plans', payload)
+    // 同一个意图固定用同一个幂等键：即使前端重发，后端也只落一条计划
+    const created = await api.post<PlanDetail>('/plans', payload, { idempotencyKey: intentKey })
     const ready = await waitUntilReady(created)
     await holdStepReveal(startedAt)
     if (ready.state === 'FAILED') {
@@ -172,6 +184,9 @@ async function startPlan(payload: PlanInput): Promise<void> {
     phase.value = 'form'
     errorStatus.value = error instanceof ApiError ? error.status : 0
     errorMessage.value = describeError(error)
+  } finally {
+    submitting.value = false
+    submitter.end()
   }
 }
 
@@ -234,7 +249,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <PlannerForm v-model="form" @submit="startPlan" />
+      <PlannerForm v-model="form" :disabled="submitting" @submit="startPlan" />
     </div>
 
     <div v-else-if="phase === 'loading'" class="card">

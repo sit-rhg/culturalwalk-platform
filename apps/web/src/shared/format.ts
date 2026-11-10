@@ -44,10 +44,16 @@ export function money(fen: number | null | undefined): string {
   return '¥' + (Number.isInteger(yuan) ? String(yuan) : yuan.toFixed(1))
 }
 
+/**
+ * 区间缺失的一侧要说清楚，否则「¥45」看着像一口价：
+ * 只有下限 = 起价，只有上限 = 封顶价，两端都没有才是待核实。
+ */
 export function moneyRange(min: number | null | undefined, max: number | null | undefined): string {
   if (min == null && max == null) return '价格待核实'
-  if (min != null && max != null && min !== max) return money(min) + '-' + money(max)
-  return money(max ?? min)
+  if (min == null) return '≤' + money(max)
+  if (max == null) return money(min) + ' 起'
+  if (min !== max) return money(min) + '-' + money(max)
+  return money(min)
 }
 
 /** 路线费用的一句话说法：没核过价的节点要明说，不能显示成 ¥0。 */
@@ -60,7 +66,9 @@ export function costText(
   if (!cost) return '费用未估'
   const unknown = cost.unknown_count ?? 0
   const range = moneyRange(cost.min_total, cost.max_total)
-  if (unknown > 0 && !cost.max_total) return '费用待核实'
+  // 只有起价时也得把「¥45 起」说出来：不能因为没封顶就当成完全没核过价。
+  // 两端都没价（或都是 0）才是真·待核实。
+  if (unknown > 0 && !cost.min_total && !cost.max_total) return '费用待核实'
   return unknown > 0 ? range + '（' + unknown + ' 个节点待核价）' : range
 }
 
