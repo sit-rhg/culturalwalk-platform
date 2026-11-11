@@ -24,6 +24,7 @@ function node(overrides: Partial<EditableNode> = {}): EditableNode {
     transport: 'walk',
     note: '',
     price_yuan: '',
+    source_ids: [],
     ...overrides,
   }
 }
@@ -122,6 +123,7 @@ describe('PUT /route-drafts/{id}/nodes 载荷', () => {
         note: '斋饭 11:00 开',
         price_min: 2000,
         price_max: 2000,
+        source_ids: [],
       },
       {
         place_id: 'p-2',
@@ -130,6 +132,7 @@ describe('PUT /route-drafts/{id}/nodes 载荷', () => {
         note: null,
         price_min: null,
         price_max: null,
+        source_ids: [],
       },
     ])
   })
@@ -138,6 +141,21 @@ describe('PUT /route-drafts/{id}/nodes 载荷', () => {
     expect(normalizeTransport('metro')).toBe('metro')
     expect(normalizeTransport(undefined)).toBe('walk')
     expect(normalizeTransport('ufo')).toBe('walk')
+  })
+
+  it('加载编辑再保存时保留 source_ids', async () => {
+    const { toEditableNode } = await import('./draft') as unknown as {
+      toEditableNode: (node: unknown) => EditableNode
+    }
+    const sourceIds = ['39335734-8b7a-52c0-8fff-1ed83f344f06']
+
+    const loaded = toEditableNode({
+      place: { id: 'p-1', name: '第一师范', district: '天心区' },
+      source_ids: sourceIds,
+    })
+    const payload = buildNodePayload([loaded])
+
+    expect(payload[0].source_ids).toEqual(sourceIds)
   })
 })
 

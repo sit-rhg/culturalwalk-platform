@@ -22,13 +22,29 @@ export type EditableNode = {
   transport: Transport
   note: string
   price_yuan: string
+  source_ids: string[]
 }
 
 export type DraftCost = Schemas['CostSummary']
+type DraftNode = NonNullable<Schemas['RouteDraftDetail']['nodes']>[number]
 
 export function normalizeTransport(value: string | null | undefined): Transport {
   const hit = TRANSPORT_OPTIONS.find((option) => option === value)
   return hit ?? 'walk'
+}
+
+export function toEditableNode(node: DraftNode): EditableNode {
+  return {
+    uid: crypto.randomUUID(),
+    place_id: node.place?.id ?? '',
+    name: node.place?.name ?? '未命名地点',
+    district: node.place?.district ?? null,
+    stay_minutes: node.stay_minutes ?? 60,
+    transport: normalizeTransport(node.transport),
+    note: node.note ?? '',
+    price_yuan: fenToYuan(node.price_min ?? node.price_max),
+    source_ids: [...(node.source_ids ?? [])],
+  }
 }
 
 /** 分 → 输入框里的元字符串；空值给空串，让占位提示接管 */
@@ -107,6 +123,7 @@ export function buildNodePayload(nodes: readonly EditableNode[]): Schemas['Route
       note: note ? note : null,
       price_min: fen,
       price_max: fen,
+      source_ids: [...node.source_ids],
     }
   })
 }

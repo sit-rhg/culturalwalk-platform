@@ -231,4 +231,40 @@ describe('共享请求层', () => {
     expect(me.role).toBe('admin')
     expect(me.username).toBeTruthy()
   })
+
+  it('mock 转草稿使用 draft_id，保存节点时保留 source_ids', async () => {
+    const plan = await api.mock.post<{ id: string }>('/plans', {
+      city: 'changsha',
+      days: 1,
+      people: 2,
+      budget_total: 60000,
+    })
+    const created = await api.mock.post<{ draft_id: string }>(`/plans/${plan.id}/to-draft`)
+    expect(created.draft_id).toBeTruthy()
+
+    type MockDraft = { id: string; nodes?: { source_ids?: string[] }[] }
+    const detail = await api.mock.get<MockDraft>(`/route-drafts/${created.draft_id}`)
+    expect(detail.nodes?.[0]?.source_ids).toEqual([])
+
+    const sourceIds = ['39335734-8b7a-52c0-8fff-1ed83f344f06']
+    const { handleMock } = await import('@/shared/mock/handlers')
+    const saved = await handleMock<MockDraft>(
+      'PUT',
+      `/route-drafts/${created.draft_id}/nodes`,
+      new URLSearchParams(),
+      {
+        nodes: [
+          {
+            place_id: 'p-diyishifan',
+            stay_minutes: 60,
+            transport: 'walk',
+            source_ids: sourceIds,
+          },
+        ],
+      },
+      null,
+      { demo: true },
+    )
+    expect(saved.nodes?.[0]?.source_ids).toEqual(sourceIds)
+  })
 })

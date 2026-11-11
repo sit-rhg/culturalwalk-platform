@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { PlanInput } from '@/api/types'
 import { defaultForm, toPlanInput } from '@/modules/planner-form/plan-form'
 
-import { createPlanSubmitter } from './submit'
+import { createPlanSubmitter, draftIdFromResponse } from './submit'
 
 function payload(overrides: Partial<Parameters<typeof toPlanInput>[0]> = {}): PlanInput {
   return toPlanInput({ ...defaultForm(), ...overrides })
@@ -64,5 +64,11 @@ describe('createPlanSubmitter', () => {
     const changed = submitter.begin(payload({ days: 3 }))
     submitter.end()
     expect(changed).toBe('key-2')
+  })
+})
+
+describe('draftIdFromResponse', () => {
+  it('按契约读取 to-draft 返回的 draft_id', () => {
+    expect(draftIdFromResponse({ draft_id: 'draft-187' })).toBe('draft-187')
   })
 })

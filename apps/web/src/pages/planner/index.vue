@@ -4,7 +4,7 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 
-import type { PlanDetail, PlanInput, RouteDraftDetail } from '@/api/types'
+import type { PlanDetail, PlanInput } from '@/api/types'
 import { ApiError, api } from '@/shared/api'
 import {
   confidenceLabel,
@@ -23,7 +23,7 @@ import {
   stepState,
   type PlannerForm as PlannerFormState,
 } from '@/modules/planner-form/plan-form'
-import { createPlanSubmitter } from './submit'
+import { createPlanSubmitter, draftIdFromResponse } from './submit'
 
 type PlanDay = NonNullable<PlanDetail['days_plan']>[number]
 
@@ -199,9 +199,11 @@ async function convertToDraft(): Promise<void> {
   converting.value = true
   draftError.value = ''
   try {
-    const draft = await api.post<RouteDraftDetail>(`/plans/${plan.value.id}/to-draft`)
-    draftId.value = draft.id
-    draftTitle.value = draft.title
+    const draft = await api.post<Parameters<typeof draftIdFromResponse>[0]>(
+      `/plans/${plan.value.id}/to-draft`,
+    )
+    draftId.value = draftIdFromResponse(draft)
+    draftTitle.value = ''
   } catch (error) {
     draftError.value = describeError(error)
   } finally {

@@ -1298,6 +1298,10 @@ components:
         media_asset_ids:
           type: array
           items: { type: string, format: uuid }
+        source_ids:
+          type: array
+          description: 该节点文化资料来源的编号数组（不是 URL）
+          items: { type: string, format: uuid }
 
     Audience:
       type: string
@@ -1374,6 +1378,10 @@ components:
                   price_max: { type: [integer, "null"] }
                   media_asset_ids:
                     type: array
+                    items: { type: string, format: uuid }
+                  source_ids:
+                    type: array
+                    description: 该节点文化资料来源的编号数组（不是 URL）
                     items: { type: string, format: uuid }
             cost:
               $ref: "#/components/schemas/CostSummary"
