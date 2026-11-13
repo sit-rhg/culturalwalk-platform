@@ -199,7 +199,7 @@ say "启动规划 worker"
 ) &
 PIDS+=("$!")
 
-say "启动前端 :$WEB_PORT（dev:real，走真接口）"
+say "启动前端 :${WEB_PORT}（dev:real，走真接口）"
 (
   cd "$ROOT" || exit 1
   exec "${PNPM_CMD[@]}" -C apps/web dev:real

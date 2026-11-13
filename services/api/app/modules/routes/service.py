@@ -409,6 +409,7 @@ class RoutesService:
                     # 存字符串而不是 UUID 对象：JSON 列在 SQLite/PG 上都能直接序列化，
                     # 读出来再转回 UUID，避免依赖驱动对 Uuid 的 JSON 支持。
                     media_asset_ids=[str(asset_id) for asset_id in node.media_asset_ids],
+                    source_ids=[str(source_id) for source_id in node.source_ids],
                 )
                 for position, node in enumerate(payload.nodes, start=1)
             ],
@@ -564,6 +565,7 @@ class RoutesService:
                     "price_max": node.price_max,
                     # 换图也应改变内容指纹：审批要能区分「同一路线不同配图」。
                     "media_asset_ids": [str(asset_id) for asset_id in (node.media_asset_ids or [])],
+                    "source_ids": [str(source_id) for source_id in (node.source_ids or [])],
                 }
                 for node in self.repo.list_nodes(draft.id)
             ],
@@ -631,6 +633,7 @@ class RoutesService:
                     price_min=node.price_min,
                     price_max=node.price_max,
                     media_asset_ids=[uuid.UUID(raw) for raw in (node.media_asset_ids or [])],
+                    source_ids=[uuid.UUID(raw) for raw in (node.source_ids or [])],
                 )
             )
         base = RouteDraftOut.model_validate(draft)

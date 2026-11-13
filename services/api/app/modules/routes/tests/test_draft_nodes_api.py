@@ -152,6 +152,33 @@ def test_replace_nodes_assigns_positions_from_array_order(
     }
 
 
+def test_source_ids_survive_detail_and_snapshot(
+    client: TestClient, db_session: Session, user_headers: dict
+) -> None:
+    from app.modules.routes.service import RoutesService
+
+    draft = _create_draft(client, user_headers)
+    place_id = _add_place(db_session)
+    source_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+
+    response = _put(
+        client,
+        user_headers,
+        draft["id"],
+        [_node(place_id, source_ids=source_ids)],
+        if_match=draft["lock_version"],
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["nodes"][0]["source_ids"] == source_ids
+    detail = client.get(f"{API}/{draft['id']}", headers=user_headers)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["nodes"][0]["source_ids"] == source_ids
+
+    version = RoutesService(db_session).freeze_version(draft_id=uuid.UUID(draft["id"]))
+    assert version.snapshot["nodes"][0]["source_ids"] == source_ids
+
+
 def test_reordering_nodes_is_reflected_on_get(
     client: TestClient, db_session: Session, user_headers: dict
 ) -> None:

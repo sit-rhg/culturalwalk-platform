@@ -105,18 +105,18 @@ export const DRAFT_MAP: Record<string, RouteDraft> = Object.fromEntries(
 
 export const DRAFT_NODES: Record<string, DraftNode[]> = {
   'd-001': [
-    { position: 1, place: PLACE_MAP['p-diyishifan'], stay_minutes: 60, transport: 'walk', note: '校史馆周三下午开放。', price_min: 0, price_max: 0 },
-    { position: 2, place: PLACE_MAP['p-baishajing'], stay_minutes: 25, transport: 'walk', note: null, price_min: 0, price_max: 0 },
-    { position: 3, place: PLACE_MAP['p-taiping'], stay_minutes: 50, transport: 'bus', note: '傍晚人多。', price_min: 200, price_max: 200 },
+    { position: 1, place_missing: false, place: PLACE_MAP['p-diyishifan'], stay_minutes: 60, transport: 'walk', note: '校史馆周三下午开放。', price_min: 0, price_max: 0 },
+    { position: 2, place_missing: false, place: PLACE_MAP['p-baishajing'], stay_minutes: 25, transport: 'walk', note: null, price_min: 0, price_max: 0 },
+    { position: 3, place_missing: false, place: PLACE_MAP['p-taiping'], stay_minutes: 50, transport: 'bus', note: '傍晚人多。', price_min: 200, price_max: 200 },
   ],
   'd-002': [
-    { position: 1, place: PLACE_MAP['p-museum'], stay_minutes: 150, transport: 'metro', note: '需预约，周一闭馆。', price_min: 0, price_max: 0 },
-    { position: 2, place: PLACE_MAP['p-tianxinge'], stay_minutes: 50, transport: 'taxi', note: null, price_min: 3200, price_max: 3200 },
+    { position: 1, place_missing: false, place: PLACE_MAP['p-museum'], stay_minutes: 150, transport: 'metro', note: '需预约，周一闭馆。', price_min: 0, price_max: 0 },
+    { position: 2, place_missing: false, place: PLACE_MAP['p-tianxinge'], stay_minutes: 50, transport: 'taxi', note: null, price_min: 3200, price_max: 3200 },
   ],
   'd-003': [
-    { position: 1, place: PLACE_MAP['p-taiping'], stay_minutes: 60, transport: 'walk', note: null, price_min: 0, price_max: 0 },
-    { position: 2, place: PLACE_MAP['p-chaozong'], stay_minutes: 45, transport: 'walk', note: null, price_min: 0, price_max: 0 },
-    { position: 3, place: PLACE_MAP['p-kaifusi'], stay_minutes: 40, transport: 'bus', note: '斋饭 11:00 开。', price_min: 200, price_max: 200 },
+    { position: 1, place_missing: false, place: PLACE_MAP['p-taiping'], stay_minutes: 60, transport: 'walk', note: null, price_min: 0, price_max: 0 },
+    { position: 2, place_missing: false, place: PLACE_MAP['p-chaozong'], stay_minutes: 45, transport: 'walk', note: null, price_min: 0, price_max: 0 },
+    { position: 3, place_missing: false, place: PLACE_MAP['p-kaifusi'], stay_minutes: 40, transport: 'bus', note: '斋饭 11:00 开。', price_min: 200, price_max: 200 },
   ],
 }
 
@@ -270,6 +270,7 @@ export function buildPlan(input: PlanInput): PlanDetail {
       const place = PLACES[(dayIndex * perDay + i) % PLACES.length]
       return {
         order: i + 1,
+        place_missing: false,
         place,
         stay_minutes: 60,
         transport: (input.transport?.[0] ?? 'walk') as string,

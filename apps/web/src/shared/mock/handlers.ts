@@ -327,12 +327,14 @@ const table: Array<[string, string, Handler]> = [
       const placeId = String(node.place_id ?? '')
       return {
         position: index + 1,
+        place_missing: !PLACE_MAP[placeId],
         place: PLACE_MAP[placeId],
         stay_minutes: Number(node.stay_minutes ?? 60),
-        transport: node.transport ? String(node.transport) : undefined,
+        transport: node.transport as Schemas['RouteNodeInput']['transport'],
         note: typeof node.note === 'string' ? node.note : null,
         price_min: node.price_min == null ? null : Number(node.price_min),
         price_max: node.price_max == null ? null : Number(node.price_max),
+        source_ids: Array.isArray(node.source_ids) ? node.source_ids.map(String) : [],
       }
     })
     bump(draft)
@@ -484,15 +486,20 @@ const table: Array<[string, string, Handler]> = [
     state.drafts.unshift(draft)
     state.draftNodes[draft.id] = firstDay.map((item, index) => ({
       position: index + 1,
+      place_missing: item.place == null,
       // 规划结果里的点位查不到时是 null；草稿节点用「没有 place」表达同一件事
       place: item.place ?? undefined,
       stay_minutes: item.stay_minutes ?? 60,
-      transport: item.transport ?? 'walk',
+      transport: (item.transport ?? 'walk') as Schemas['RouteNodeInput']['transport'],
       note: null,
       price_min: item.price_min ?? null,
       price_max: item.price_max ?? null,
+      source_ids:
+        'source_ids' in item && Array.isArray(item.source_ids)
+          ? item.source_ids.map(String)
+          : [],
     }))
-    return draftWithNodes(draft.id)
+    return { draft_id: draft.id }
   }],
 ]
 

@@ -198,6 +198,7 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
+                    /** @description 同一请求重试时带上同一个 key，服务端返回首次结果；8–64 字符。 */
                     "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 };
                 path?: never;
@@ -340,6 +341,7 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
+                    /** @description 同一请求重试时带上同一个 key，服务端返回首次结果；8–64 字符。 */
                     "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 };
                 path?: never;
@@ -455,6 +457,7 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
+                    /** @description 同一请求重试时带上同一个 key，服务端返回首次结果；8–64 字符。 */
                     "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 };
                 path: {
@@ -527,6 +530,7 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
+                    /** @description 同一请求重试时带上同一个 key，服务端返回首次结果；8–64 字符。 */
                     "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 };
                 path?: never;
@@ -547,6 +551,9 @@ export interface paths {
                         "application/json": components["schemas"]["RouteDraft"];
                     };
                 };
+                401: components["responses"]["Unauthorized"];
+                409: components["responses"]["Conflict"];
+                422: components["responses"]["Validation"];
             };
         };
         delete?: never;
@@ -585,6 +592,7 @@ export interface paths {
                         "application/json": components["schemas"]["RouteDraftDetail"];
                     };
                 };
+                401: components["responses"]["Unauthorized"];
                 403: components["responses"]["Forbidden"];
                 404: components["responses"]["NotFound"];
             };
@@ -610,6 +618,9 @@ export interface paths {
                     };
                     content?: never;
                 };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
                 409: components["responses"]["Conflict"];
             };
         };
@@ -622,6 +633,7 @@ export interface paths {
                 header: {
                     /** @description 传草稿的 lock_version */
                     "If-Match": components["parameters"]["IfMatch"];
+                    /** @description 同一请求重试时带上同一个 key，服务端返回首次结果；8–64 字符。 */
                     "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 };
                 path: {
@@ -644,8 +656,12 @@ export interface paths {
                         "application/json": components["schemas"]["RouteDraft"];
                     };
                 };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
                 409: components["responses"]["Conflict"];
                 412: components["responses"]["PreconditionFailed"];
+                422: components["responses"]["Validation"];
             };
         };
         trace?: never;
@@ -665,6 +681,7 @@ export interface paths {
                 header: {
                     /** @description 传草稿的 lock_version */
                     "If-Match": components["parameters"]["IfMatch"];
+                    /** @description 同一请求重试时带上同一个 key，服务端返回首次结果；8–64 字符。 */
                     "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 };
                 path: {
@@ -689,6 +706,10 @@ export interface paths {
                         "application/json": components["schemas"]["RouteDraftDetail"];
                     };
                 };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
                 412: components["responses"]["PreconditionFailed"];
                 422: components["responses"]["Validation"];
             };
@@ -717,6 +738,7 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
+                    /** @description 同一请求重试时带上同一个 key，服务端返回首次结果；8–64 字符。 */
                     "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 };
                 path: {
@@ -741,6 +763,9 @@ export interface paths {
                         "application/json": components["schemas"]["Submission"];
                     };
                 };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
                 409: components["responses"]["Conflict"];
                 422: components["responses"]["Validation"];
             };
@@ -765,6 +790,7 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
+                    /** @description 同一请求重试时带上同一个 key，服务端返回首次结果；8–64 字符。 */
                     "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 };
                 path: {
@@ -783,6 +809,9 @@ export interface paths {
                         "application/json": components["schemas"]["RouteDraft"];
                     };
                 };
+                401: components["responses"]["Unauthorized"];
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
                 409: components["responses"]["Conflict"];
             };
         };
@@ -850,6 +879,7 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
+                    /** @description 同一请求重试时带上同一个 key，服务端返回首次结果；8–64 字符。 */
                     "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 };
                 path: {
@@ -891,6 +921,7 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
+                    /** @description 同一请求重试时带上同一个 key，服务端返回首次结果；8–64 字符。 */
                     "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 };
                 path: {
@@ -909,6 +940,9 @@ export interface paths {
                         "application/json": components["schemas"]["ReviewTask"];
                     };
                 };
+                403: components["responses"]["Forbidden"];
+                404: components["responses"]["NotFound"];
+                409: components["responses"]["Conflict"];
             };
         };
         delete?: never;
@@ -931,6 +965,7 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
+                    /** @description 同一请求重试时带上同一个 key，服务端返回首次结果；8–64 字符。 */
                     "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 };
                 path: {
@@ -1003,6 +1038,7 @@ export interface paths {
                         "application/json": components["schemas"]["SubmissionDetail"];
                     };
                 };
+                403: components["responses"]["Forbidden"];
                 404: components["responses"]["NotFound"];
             };
         };
@@ -1028,6 +1064,7 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
+                    /** @description 同一请求重试时带上同一个 key，服务端返回首次结果；8–64 字符。 */
                     "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 };
                 path: {
@@ -1085,6 +1122,7 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
+                    /** @description 同一请求重试时带上同一个 key，服务端返回首次结果；8–64 字符。 */
                     "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 };
                 path: {
@@ -1141,7 +1179,9 @@ export interface paths {
                     cursor?: components["parameters"]["Cursor"];
                     limit?: components["parameters"]["Limit"];
                 };
-                header?: never;
+                header?: {
+                    "If-None-Match"?: string;
+                };
                 path?: never;
                 cookie?: never;
             };
@@ -1150,6 +1190,8 @@ export interface paths {
                 /** @description 路线分页（只含已发布） */
                 200: {
                     headers: {
+                        ETag?: string;
+                        "Cache-Control"?: string;
                         [name: string]: unknown;
                     };
                     content: {
@@ -1158,6 +1200,13 @@ export interface paths {
                             next_cursor?: string | null;
                         };
                     };
+                };
+                /** @description 未变更（If-None-Match 命中） */
+                304: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
                 };
             };
         };
@@ -1194,6 +1243,7 @@ export interface paths {
                 200: {
                     headers: {
                         ETag?: string;
+                        "Cache-Control"?: string;
                         [name: string]: unknown;
                     };
                     content: {
@@ -1203,6 +1253,7 @@ export interface paths {
                 /** @description 未变更 */
                 304: {
                     headers: {
+                        ETag?: string;
                         [name: string]: unknown;
                     };
                     content?: never;
@@ -1308,6 +1359,7 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
+                    /** @description 同一请求重试时带上同一个 key，服务端返回首次结果；8–64 字符。 */
                     "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 };
                 path: {
@@ -1355,6 +1407,7 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
+                    /** @description 同一请求重试时带上同一个 key，服务端返回首次结果；8–64 字符。 */
                     "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 };
                 path: {
@@ -1396,6 +1449,7 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
+                    /** @description 同一请求重试时带上同一个 key，服务端返回首次结果；8–64 字符。 */
                     "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 };
                 path: {
@@ -1480,6 +1534,7 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
+                    /** @description 同一请求重试时带上同一个 key，服务端返回首次结果；8–64 字符。 */
                     "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 };
                 path?: never;
@@ -1592,6 +1647,7 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
+                    /** @description 同一请求重试时带上同一个 key，服务端返回首次结果；8–64 字符。 */
                     "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 };
                 path: {
@@ -1636,6 +1692,7 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
+                    /** @description 同一请求重试时带上同一个 key，服务端返回首次结果；8–64 字符。 */
                     "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 };
                 path?: never;
@@ -1684,6 +1741,7 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
+                    /** @description 同一请求重试时带上同一个 key，服务端返回首次结果；8–64 字符。 */
                     "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 };
                 path: {
@@ -1831,6 +1889,7 @@ export interface paths {
             parameters: {
                 query?: never;
                 header: {
+                    /** @description 同一请求重试时带上同一个 key，服务端返回首次结果；8–64 字符。 */
                     "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 };
                 path: {
@@ -2021,6 +2080,8 @@ export interface components {
             /** @description 分 */
             price_max?: number | null;
             media_asset_ids?: string[];
+            /** @description 该节点文化资料来源的编号数组（不是 URL） */
+            source_ids?: string[];
         };
         /**
          * @description 适合人群的取值。family=亲子 student=学生 couple=情侣 senior=长者 solo=独自 group=团体
@@ -2029,24 +2090,24 @@ export interface components {
         Audience: "family" | "student" | "couple" | "senior" | "solo" | "group";
         RouteDraftCreate: {
             title: string;
-            summary?: string;
+            summary?: string | null;
             theme_tags?: string[];
-            duration_minutes?: number;
+            duration_minutes?: number | null;
             /** @description 适合人群（多选），发现页可作为筛选条件 */
             audience?: components["schemas"]["Audience"][];
         };
         RouteDraftPatch: {
             title?: string;
-            summary?: string;
+            summary?: string | null;
             theme_tags?: string[];
-            duration_minutes?: number;
+            duration_minutes?: number | null;
             audience?: components["schemas"]["Audience"][];
         };
         RouteDraft: {
             /** Format: uuid */
             id: string;
             /** Format: uuid */
-            route_id?: string;
+            route_id?: string | null;
             title: string;
             summary?: string | null;
             audience?: components["schemas"]["Audience"][];
@@ -2061,12 +2122,19 @@ export interface components {
         RouteDraftDetail: components["schemas"]["RouteDraft"] & {
             nodes?: {
                 position?: number;
-                place?: components["schemas"]["Place"];
+                /** @description 地点被删/下线时为 null，此时 place_missing 为 true。 */
+                place?: components["schemas"]["Place"] | null;
+                /** @default false */
+                place_missing: boolean;
                 stay_minutes?: number;
-                transport?: string;
+                /** @enum {string|null} */
+                transport?: "walk" | "metro" | "bus" | "taxi" | "bike" | null;
                 note?: string | null;
                 price_min?: number | null;
                 price_max?: number | null;
+                media_asset_ids?: string[];
+                /** @description 该节点文化资料来源的编号数组（不是 URL） */
+                source_ids?: string[];
             }[];
             cost?: components["schemas"]["CostSummary"];
         };
@@ -2259,8 +2327,10 @@ export interface components {
                 day_index?: number;
                 items?: {
                     order?: number;
-                    /** @description 点位资料查不到时为 null，前端显示「点位待补」 */
+                    /** @description 点位资料查不到、或地点被删/下线时为 null，此时 place_missing 为 true。 */
                     place?: components["schemas"]["Place"] | null;
+                    /** @default false */
+                    place_missing: boolean;
                     stay_minutes?: number;
                     transport?: string;
                     price_min?: number | null;
@@ -2383,6 +2453,7 @@ export interface components {
     parameters: {
         Cursor: string;
         Limit: number;
+        /** @description 同一请求重试时带上同一个 key，服务端返回首次结果；8–64 字符。 */
         IdempotencyKey: string;
         /** @description 传草稿的 lock_version */
         IfMatch: number;

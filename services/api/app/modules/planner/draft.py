@@ -311,6 +311,7 @@ class RoutesDraftPort:
                     note=node.note,
                     price_min=node.price_min,
                     price_max=node.price_max,
+                    source_ids=list(node.source_ids),
                 )
                 for node in nodes
             ]

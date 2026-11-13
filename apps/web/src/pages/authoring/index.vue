@@ -17,10 +17,9 @@ import {
   buildNodePayload,
   costText,
   costUnknownHint,
-  fenToYuan,
   moveNode,
-  normalizeTransport,
   removeNode,
+  toEditableNode,
   validateNodes,
 } from './draft'
 import type { EditableNode } from './draft'
@@ -78,22 +77,9 @@ function errorText(error: unknown): string {
   return '网络异常，请稍后再试'
 }
 
-function toEditable(node: NonNullable<DraftDetail['nodes']>[number]): EditableNode {
-  return {
-    uid: crypto.randomUUID(),
-    place_id: node.place?.id ?? '',
-    name: node.place?.name ?? '未命名地点',
-    district: node.place?.district ?? null,
-    stay_minutes: node.stay_minutes ?? 60,
-    transport: normalizeTransport(node.transport),
-    note: node.note ?? '',
-    price_yuan: fenToYuan(node.price_min ?? node.price_max),
-  }
-}
-
 function applyDetail(res: DraftDetail): void {
   detail.value = res
-  nodes.value = (res.nodes ?? []).map(toEditable)
+  nodes.value = (res.nodes ?? []).map(toEditableNode)
   savedSnapshot.value = JSON.stringify(buildNodePayload(nodes.value))
   addOpen.value = false
   addError.value = ''
@@ -250,6 +236,7 @@ function addNode(): void {
     transport: 'walk',
     note: '',
     price_yuan: '',
+    source_ids: [],
   })
   addOpen.value = false
   addForm.placeId = ''

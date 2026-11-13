@@ -630,6 +630,35 @@ def test_real_port_writes_nodes_in_plan_order(db: Session) -> None:
     assert detail.nodes[1].transport == "metro"
 
 
+def test_real_port_preserves_source_ids_through_route_version(db: Session) -> None:
+    from app.modules.routes.service import RoutesService
+
+    owner_id = _user(db, "to-draft-sources")
+    place_id = _place(db, "岳麓书院")
+    source_id = uuid.uuid4()
+    itinerary = _plan(db, user_id=owner_id)
+    _item(
+        db,
+        _day(db, itinerary, 1),
+        order=1,
+        place_id=place_id,
+        sources=[str(source_id)],
+    )
+    db.flush()
+
+    draft_id = PlannerService(db).to_draft(
+        user_id=owner_id,
+        plan_id=itinerary.id,
+        idempotency_key="idem-real-sources",
+    )
+
+    routes = RoutesService(db)
+    detail = routes.get_detail(draft_id=draft_id, owner_id=owner_id)
+    assert getattr(detail.nodes[0], "source_ids", None) == [source_id]
+    version = routes.freeze_version(draft_id=draft_id, actor_id=owner_id)
+    assert version.snapshot["nodes"][0]["source_ids"] == [str(source_id)]
+
+
 def test_real_port_is_idempotent_per_plan(db: Session) -> None:
     """同一张行程点两次「生成草稿」，不能多出一份重复草稿。"""
     owner_id = _user(db, "to-draft-idem")

@@ -106,6 +106,7 @@ class RouteNodeInput(BaseModel):
     # 只能是本人名下、已扫描通过的 CLEAN 资产；写入前由 media 模块的
     # require_referenceable 核验，routes 不复制扫描状态的判定逻辑。
     media_asset_ids: list[uuid.UUID] = Field(default_factory=list)
+    source_ids: list[uuid.UUID] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _check_price_range(self) -> RouteNodeInput:
@@ -144,9 +145,9 @@ class RouteNodeOut(BaseModel):
     note: str | None = None
     price_min: int | None = None
     price_max: int | None = None
-    # 契约的 RouteNodeInput 只有 media_asset_ids，没定义输出形状；
-    # 详情把同一份 id 回显，草稿页才能渲染缩略图。
+    # 详情把媒体与来源编号原样回显，审核和转草稿才能继续追溯。
     media_asset_ids: list[uuid.UUID] = Field(default_factory=list)
+    source_ids: list[uuid.UUID] = Field(default_factory=list)
 
 
 class CostSummaryOut(BaseModel):

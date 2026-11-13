@@ -250,6 +250,13 @@ class RouteNode(Base):
         default=list,
         server_default=text("'[]'"),
     )
+    # 文化资料来源只存编号，公开读取时再由 catalog 解析；不要存易变化的 URL 副本。
+    source_ids: Mapped[list[str]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"),
+        nullable=False,
+        default=list,
+        server_default=text("'[]'"),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )

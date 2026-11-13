@@ -4,7 +4,7 @@
  * 改了条件再提交才算新的意图，换新键。
  */
 
-import type { PlanInput } from '@/api/types'
+import type { paths, PlanInput } from '@/api/types'
 
 export interface PlanSubmitter {
   /** 开始一次提交；已有请求在飞时返回 null，调用方必须直接忽略这次点击 */
@@ -41,4 +41,10 @@ export function createPlanSubmitter(newKey: () => string = randomKey): PlanSubmi
       inFlight = false
     },
   }
+}
+
+type ToDraftResponse = paths['/plans/{plan_id}/to-draft']['post']['responses']['201']['content']['application/json']
+
+export function draftIdFromResponse(response: ToDraftResponse): string {
+  return response.draft_id
 }
