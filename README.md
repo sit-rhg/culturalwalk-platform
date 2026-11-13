@@ -53,7 +53,7 @@ CulturalWalk 给的不是一张更好的榜单，而是**一条当地独有、�
 ## 2. 一分钟跑起来
 
 ```bash
-# 0) 依赖：Docker Desktop、Python 3.12、Node 20 + pnpm
+# 0) 依赖：Docker Desktop、Python 3.12、Node 24 + pnpm 12（详见 docs/04）
 git clone <this-repo> && cd culturalwalk-platform
 
 # 1) 起数据库和对象存储

@@ -22,7 +22,7 @@ fi
 
 if [ ! -x apps/web/node_modules/.bin/vite ]; then
   if ! command -v pnpm >/dev/null 2>&1; then
-    printf '未找到 pnpm，请先安装 Node.js 20+ 和 pnpm。\n' >&2
+    printf '未找到 pnpm，请先安装 Node.js 24 和 pnpm 12（见 docs/04）。\n' >&2
     exit 1
   fi
   printf '首次运行：安装前端依赖...\n'
