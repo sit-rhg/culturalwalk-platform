@@ -5,6 +5,9 @@ packages:
 
 # pnpm 10+ 默认不执行依赖的构建脚本。esbuild 的 preinstall 只是校验平台二进制，
 # 真正的二进制来自可选依赖 @esbuild/win32-x64（或对应平台包），因此这里放行即可。
+allowBuilds:
+  esbuild: true
+
 onlyBuiltDependencies:
   - esbuild
 
